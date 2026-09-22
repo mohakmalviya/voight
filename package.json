@@ -1,0 +1,21 @@
+{
+  "name": "human-gate",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Self-hosted admission gateway for reducing automated extraction",
+  "engines": { "node": ">=24.14.0 <25" },
+  "scripts": {
+    "build": "node scripts/build.mjs",
+    "start": "node --env-file-if-exists=.env src/main.mjs",
+    "demo": "node --env-file-if-exists=.env scripts/demo.mjs",
+    "admin": "node --env-file-if-exists=.env src/admin.mjs",
+    "test": "node --test test/*.test.mjs",
+    "check": "node scripts/check.mjs"
+  },
+  "dependencies": {
+    "@simplewebauthn/browser": "14.0.0",
+    "@simplewebauthn/server": "14.0.2"
+  },
+  "devDependencies": { "esbuild": "0.28.2" }
+}

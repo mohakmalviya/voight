@@ -1,0 +1,31 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Access protected · Human Gate</title>
+  <link rel="stylesheet" href="/_gate/style.css">
+  <script type="module" src="/_gate/client.js"></script>
+</head>
+<body>
+  <header><a class="brand" href="/_gate/index.html"><span class="logo" aria-hidden="true">H</span> HUMAN GATE</a><span class="badge"><i></i> CONTENT PROTECTED</span></header>
+  <main>
+    <div class="eyebrow">PRIVATE ACCESS / 01</div>
+    <h1>A person.<br>A passkey.<br><span>A protected space.</span></h1>
+    <p class="intro">This website limits automated access. Use your approved passkey to continue.</p>
+    <section class="card" aria-labelledby="access-heading">
+      <div class="card-top"><span class="tiny">VERIFY YOUR ACCESS</span><span aria-hidden="true">↗</span></div>
+      <h2 id="access-heading">Welcome back.</h2>
+      <p>Confirm with your device’s fingerprint, face recognition, PIN, or security key.</p>
+      <button id="login" type="button">Continue with a passkey <span aria-hidden="true">→</span></button>
+      <div class="divider"></div>
+      <details><summary>Have an invitation?</summary>
+        <form id="enroll"><label for="invite">One-time invitation code</label><input id="invite" name="invite" type="password" autocomplete="off" maxlength="43" required spellcheck="false"><button type="submit" class="secondary">Register this device</button></form>
+      </details>
+      <p id="status" role="status" aria-live="polite"></p>
+    </section>
+    <div class="notes"><span>Short access sessions</span><span>No image puzzles</span><span>Operator-approved access</span></div>
+    <noscript><p>JavaScript is required for passkey verification. Contact the website operator if you need assistance.</p></noscript>
+  </main>
+  <footer><span>HUMAN GATE / EARLY PREVIEW</span><span>Need access? Contact this website’s operator.</span></footer>
+</body>
+</html>
