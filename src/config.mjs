@@ -20,5 +20,10 @@ export function configFromEnv(env = process.env) {
     sessionSeconds: integer(env, 'SESSION_SECONDS', 300, 15, 3600),
     requestsPerMinute: integer(env, 'REQUESTS_PER_MINUTE', 30, 1, 1000),
     pagesPerSession: integer(env, 'PAGES_PER_SESSION', 60, 1, 10000),
+    extractionWindowSeconds: integer(env, 'EXTRACTION_WINDOW_SECONDS', 600, 60, 3600),
+    bytesPerWindow: integer(env, 'BYTES_PER_WINDOW', 20 * 1024 * 1024, 1, 1024 * 1024 * 1024),
+    resourcesPerWindow: integer(env, 'RESOURCES_PER_WINDOW', 60, 1, 10000),
+    maxConcurrentRequests: integer(env, 'MAX_CONCURRENT_REQUESTS', 4, 1, 32),
+    maxResponseBytes: integer(env, 'MAX_RESPONSE_BYTES', 5 * 1024 * 1024, 1, 32 * 1024 * 1024),
   };
 }

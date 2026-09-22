@@ -10,6 +10,7 @@ This prototype is ready for local evaluation. Do not treat the demo as a hardene
 6. Audit compatibility with your own app. Only Content-Type is forwarded back from the origin. Browser cookies, Authorization, forwarded identity headers and cache validators are not forwarded upstream. Redirects are rejected.
 7. Issue invitations privately after approving the recipient. There is no automatic enrollment, email sending, or identity verification service.
 8. Test real passkeys and accessibility on the devices your audience uses. A production rollout requires an independent security review and a measured false-rejection study.
+9. Tune extraction limits against your actual page/asset sizes and resource URLs. Defaults are evaluation settings, not measured human/bot thresholds. Query strings count toward resource diversity. See [policy semantics](extraction-policy.md).
 
 ## Local validation
 
@@ -17,6 +18,8 @@ This prototype is ready for local evaluation. Do not treat the demo as a hardene
 
 ## Restart and backup
 
-Sessions and counters persist in SQLite; expiry is checked using wall-clock time. Use SQLite's backup API or stop the process before copying the database and its WAL. No automatic database deletion, migration rollback, or key recovery is included.
+Sessions, counters, byte usage and resource HMACs persist in SQLite; expiry is checked using wall-clock time. Keep the clock synchronized. Use SQLite's backup API or stop the process before copying the database and its WAL. No automatic database deletion, migration rollback, or key recovery is included. Restoring an older backup also restores older usage and can restore allowance; treat restores as security-sensitive operations.
+
+Upgrading from 0.1 adds tables and indexes on startup without replacing credentials or sessions. Preserve the database and its new resource HMAC key across restarts. Run one gateway process; the concurrency guard is process-local. On restart, old connections close and concurrency starts empty, while durable extraction usage remains. Older binaries do not enforce the new policy even if its tables remain.
 
 Changing the public hostname changes the WebAuthn relying party and may require re-enrollment. Do not silently relax origin/RP checks during migrations.

@@ -1,0 +1,131 @@
+{
+  "generatedAt": "2026-09-22T21:10:20.771Z",
+  "node": "24.19.0",
+  "scope": "Single-process loopback scripts with real WebAuthn verification and a software authenticator; controlled limits, not a human/bot classifier.",
+  "notMeasured": [
+    "real humans and false rejection",
+    "browser agents and stealth automation",
+    "hardware passkeys",
+    "internet-scale throughput and DDoS"
+  ],
+  "scenarios": [
+    {
+      "name": "unapproved HTTP extraction",
+      "requests": 12,
+      "allowed": 0,
+      "blocked": 12,
+      "upstreamRequests": 0,
+      "protectedBytes": 0,
+      "p50Ms": 6.15,
+      "p95Ms": 24.8,
+      "decisions": {
+        "admission_required": 12
+      },
+      "limits": {
+        "windowSeconds": 600,
+        "bytes": 20971520,
+        "resources": 60,
+        "concurrency": 4
+      }
+    },
+    {
+      "name": "approved scripted reading within limits",
+      "requests": 6,
+      "allowed": 6,
+      "blocked": 0,
+      "upstreamRequests": 6,
+      "protectedBytes": 6144,
+      "p50Ms": 11.47,
+      "p95Ms": 20.5,
+      "decisions": {
+        "admitted": 6
+      },
+      "limits": {
+        "windowSeconds": 600,
+        "bytes": 20971520,
+        "resources": 60,
+        "concurrency": 4
+      }
+    },
+    {
+      "name": "approved query enumeration",
+      "requests": 20,
+      "allowed": 5,
+      "blocked": 15,
+      "upstreamRequests": 5,
+      "protectedBytes": 5120,
+      "p50Ms": 7.34,
+      "p95Ms": 14.18,
+      "decisions": {
+        "admitted": 5,
+        "resource_budget": 15
+      },
+      "limits": {
+        "windowSeconds": 600,
+        "bytes": 20971520,
+        "resources": 5,
+        "concurrency": 4
+      }
+    },
+    {
+      "name": "approved session rotation",
+      "requests": 8,
+      "allowed": 3,
+      "blocked": 5,
+      "upstreamRequests": 3,
+      "protectedBytes": 3072,
+      "p50Ms": 5.72,
+      "p95Ms": 24.95,
+      "decisions": {
+        "admitted": 3,
+        "resource_budget": 5
+      },
+      "limits": {
+        "windowSeconds": 600,
+        "bytes": 20971520,
+        "resources": 3,
+        "concurrency": 4
+      }
+    },
+    {
+      "name": "approved repeated download",
+      "requests": 12,
+      "allowed": 4,
+      "blocked": 8,
+      "upstreamRequests": 4,
+      "protectedBytes": 8192,
+      "p50Ms": 7.72,
+      "p95Ms": 28.15,
+      "decisions": {
+        "admitted": 4,
+        "byte_budget": 8
+      },
+      "limits": {
+        "windowSeconds": 600,
+        "bytes": 8192,
+        "resources": 60,
+        "concurrency": 4
+      }
+    },
+    {
+      "name": "approved parallel saturation",
+      "requests": 8,
+      "allowed": 2,
+      "blocked": 6,
+      "upstreamRequests": 2,
+      "protectedBytes": 2048,
+      "p50Ms": 9.52,
+      "p95Ms": 19.57,
+      "decisions": {
+        "parallel_limit": 6,
+        "admitted": 2
+      },
+      "limits": {
+        "windowSeconds": 600,
+        "bytes": 20971520,
+        "resources": 60,
+        "concurrency": 2
+      }
+    }
+  ]
+}

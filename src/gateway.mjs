@@ -1,13 +1,14 @@
 import http from 'node:http';
-import { Readable, Transform } from 'node:stream';
-import { pipeline } from 'node:stream/promises';
+import { once } from 'node:events';
+import { finished } from 'node:stream/promises';
 import { randomUUID } from 'node:crypto';
 import { token, digest } from './store.mjs';
 import { webauthn } from './webauthn.mjs';
 
 const PREFIX = '/_gate/';
-const MAX_RESPONSE = 5 * 1024 * 1024;
-class Denied extends Error { constructor(status, reason) { super(reason); this.status = status; } }
+class Denied extends Error {
+  constructor(status, reason, retryAfter = 60) { super(reason); this.status = status; this.retryAfter = retryAfter; }
+}
 
 function cookie(req, name) {
   const values = (req.headers.cookie ?? '').split(';').map(v => v.trim()).filter(v => v.startsWith(`${name}=`));
@@ -32,13 +33,15 @@ async function json(req) {
 }
 
 export function createGateway({ config, store, assets, auth = webauthn(config), audit = event => console.log(JSON.stringify(event)) }) {
+  // One process owns all active transfers. Durable extraction budgets live in SQLite.
+  const activeTransfers = new Map();
   const sessionCookie = config.secure ? '__Host-hg_session' : 'hg_session';
   const ceremonyCookie = config.secure ? '__Host-hg_ceremony' : 'hg_ceremony';
   const setCookie = (res, name, value, seconds) => res.setHeader('set-cookie', `${name}=${value}; Path=/; HttpOnly; SameSite=Strict; Max-Age=${seconds}${config.secure ? '; Secure' : ''}`);
   const server = http.createServer({ maxHeaderSize: 16384 }, async (req, res) => {
     const requestID = randomUUID();
     let outcome = 'internal_error';
-    res.on('finish', () => audit({ at: new Date().toISOString(), requestID, status: res.statusCode, reason: outcome }));
+    let releaseSlot, controller, proxySignal, abortOnClose, chargedBytes = 0;
     res.setHeader('x-request-id', requestID);
     res.setHeader('cache-control', 'no-store, private');
     res.setHeader('x-content-type-options', 'nosniff');
@@ -114,30 +117,63 @@ export function createGateway({ config, store, assets, auth = webauthn(config), 
         return send(res, 401, assets[`${PREFIX}index.html`].body, 'text/html; charset=utf-8');
       }
       if (!store.limit(`reader:${admitted.credential_id}`, config.requestsPerMinute)) throw new Denied(429, 'reader_rate');
+      const credentialID = admitted.credential_id;
+      const active = activeTransfers.get(credentialID) ?? 0;
+      if (active >= config.maxConcurrentRequests) throw new Denied(429, 'parallel_limit', 1);
+      activeTransfers.set(credentialID, active + 1);
+      releaseSlot = () => {
+        const remaining = activeTransfers.get(credentialID) - 1;
+        if (remaining) activeTransfers.set(credentialID, remaining); else activeTransfers.delete(credentialID);
+      };
+      const restriction = store.beginResource(credentialID, url.pathname + url.search, config);
+      if (restriction) throw new Denied(429, restriction.reason, restriction.retryAfter);
+      controller = new AbortController();
+      proxySignal = AbortSignal.any([controller.signal, AbortSignal.timeout(10000)]);
+      abortOnClose = () => { if (!res.writableFinished) controller.abort(new Denied(499, 'client_closed')); };
+      res.on('close', abortOnClose);
+      if (res.destroyed) throw new Denied(499, 'client_closed');
       // Construct a fixed-origin URL without allowing protocol-relative or absolute URL overrides.
       const target = new URL(config.upstream); target.pathname = url.pathname; target.search = url.search;
       const upstream = await fetch(target, {
-        method: req.method, redirect: 'manual', signal: AbortSignal.timeout(10000),
-        headers: { accept: req.headers.accept ?? '*/*', 'user-agent': 'HumanGate/0.1', 'x-human-gate-user': admitted.credential_id },
+        method: req.method, redirect: 'manual', signal: proxySignal,
+        headers: { accept: req.headers.accept ?? '*/*', 'user-agent': 'HumanGate/0.2', 'x-human-gate-user': credentialID },
       });
       if (upstream.status >= 300 && upstream.status < 400) { await upstream.body?.cancel(); throw new Denied(502, 'upstream_redirect_rejected'); }
       // No cookies, authorization, forwarding headers, cache validators, or untrusted response headers cross this boundary.
       res.statusCode = upstream.status;
       res.setHeader('content-type', upstream.headers.get('content-type') ?? 'application/octet-stream');
       outcome = 'admitted';
-      if (!upstream.body || req.method === 'HEAD') { await upstream.body?.cancel(); return res.end(); }
+      if (!upstream.body || req.method === 'HEAD') {
+        await upstream.body?.cancel(); res.end(); await finished(res, { signal: proxySignal, cleanup: true }); return;
+      }
       let bytes = 0;
-      const cap = new Transform({ transform(chunk, _, done) { bytes += chunk.length; done(bytes > MAX_RESPONSE ? new Error('response_limit') : null, bytes > MAX_RESPONSE ? undefined : chunk); } });
-      const abortUpstream = () => { if (!res.writableFinished) cap.destroy(new Error('client_closed')); };
-      res.on('close', abortUpstream);
-      try { await pipeline(Readable.fromWeb(upstream.body), cap, res); }
-      finally { res.off('close', abortUpstream); }
+      for await (const chunk of upstream.body) {
+        proxySignal.throwIfAborted();
+        bytes += chunk.length;
+        if (bytes > config.maxResponseBytes) throw new Denied(502, 'response_size');
+        // fetch decodes compressed bodies. Charge every chunk BEFORE releasing it to the client.
+        const denied = store.chargeBytes(credentialID, chunk.length, config);
+        if (denied) throw new Denied(denied.status ?? 429, denied.reason, denied.retryAfter);
+        chargedBytes += chunk.length;
+        if (!res.write(chunk)) await once(res, 'drain', { signal: proxySignal });
+      }
+      res.end(); await finished(res, { signal: proxySignal, cleanup: true });
     } catch (error) {
-      outcome = error instanceof Denied ? error.message : 'request_rejected';
-      if (res.headersSent || res.destroyed) { res.destroy(); return; }
-      const status = error instanceof Denied ? error.status : 403;
-      if (status === 429) res.setHeader('retry-after', '60');
+      const failure = error instanceof Denied ? error : proxySignal?.reason instanceof Denied ? proxySignal.reason
+        : proxySignal?.reason?.name === 'TimeoutError' ? new Denied(504, 'upstream_timeout')
+        : new Denied(controller ? 502 : 403, controller ? 'upstream_failure' : 'request_rejected');
+      outcome = failure.message;
+      if (res.headersSent || res.destroyed) { if (!res.headersSent) res.statusCode = failure.status; res.destroy(); return; }
+      const status = failure.status;
+      if (status === 429) res.setHeader('retry-after', String(failure.retryAfter));
       send(res, status, { error: outcome, requestID });
+    } finally {
+      if (abortOnClose) res.off('close', abortOnClose);
+      controller?.abort();
+      releaseSlot?.();
+      // Close includes partial/aborted streams, which the old finish-only log missed.
+      const record = () => audit({ at: new Date().toISOString(), requestID, status: res.statusCode, reason: outcome, completed: res.writableFinished, chargedBytes });
+      if (res.destroyed || res.writableFinished) record(); else res.once('close', record);
     }
   });
   server.requestTimeout = 15000; server.headersTimeout = 10000; server.keepAliveTimeout = 5000;

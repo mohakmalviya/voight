@@ -1,6 +1,6 @@
 # Human Gate
 
-A self-hosted gateway for websites that want to restrict automated extraction. The first release is an **admission-control foundation**: protected content stays behind the gateway until an operator-approved visitor completes passkey verification.
+A self-hosted gateway for websites that want to restrict automated extraction. Protected content stays behind the gateway until an operator-approved visitor completes passkey verification. Version 0.2 adds rolling extraction limits shared by all sessions of a credential.
 
 **Status: early prototype, not production audited.** The repository is private during development. Source is MIT licensed for a future public release; visibility changes require the owner's decision.
 
@@ -11,6 +11,8 @@ A self-hosted gateway for websites that want to restrict automated extraction. T
 - Opaque, server-side sessions: 5-minute default lifetime, HttpOnly / SameSite=Strict cookies, Secure and `__Host-` cookies on HTTPS.
 - Enforcement before every proxied GET or HEAD, including API and asset paths.
 - Atomic request budgets, per-credential and connection rate limits, immediate credential revocation, and logout.
+- Rolling per-credential budgets for decoded response bytes and distinct resources (path plus query), persisted across logins and restarts.
+- Bounded concurrent transfers per credential; client disconnects cancel upstream work and release slots. Streaming stops before a chunk would exceed a byte limit or after credential revocation is observed.
 - Fixed upstream, no redirects followed, no forwarding of browser cookies or Authorization, no shared caching, response-size and upstream-time limits.
 - SQLite persistence, local administration, structured decision logs that omit URLs, IP addresses, invitation codes, cookies, and passkey payloads.
 - Tests exercise actual WebAuthn verification using a software authenticator fixture, plus common admission bypasses.
@@ -19,7 +21,7 @@ A self-hosted gateway for websites that want to restrict automated extraction. T
 
 Passkey verification does **not** prove that a browser is free of agents. An approved user can automate a session, share an invitation, or use a software authenticator. Our test fixture deliberately demonstrates the latter. A browser that has received content can save it or capture screenshots.
 
-This version excludes unapproved clients and constrains approved sessions. It does not yet provide behavioral bot classification, device attestation, cross-site reputation, large-scale DDoS protection, or complete agent isolation. See [the threat model](docs/threat-model.md) and [roadmap](docs/roadmap.md).
+This version excludes unapproved clients and constrains approved sessions. It does not yet provide behavioral bot classification, device attestation, cross-site reputation, large-scale DDoS protection, or complete agent isolation. The [controlled benchmark](docs/benchmark.md) deliberately shows approved automation succeeding within the limits. See [the threat model](docs/threat-model.md) and [roadmap](docs/roadmap.md).
 
 ## Run the local demo
 
@@ -54,30 +56,39 @@ Copy `.env.example` to `.env` and set `PUBLIC_ORIGIN` and `UPSTREAM`. Run `npm s
 | `SESSION_SECONDS` | `300` | Maximum session lifetime, no sliding refresh |
 | `REQUESTS_PER_MINUTE` | `30` | Per-credential protected request allowance |
 | `PAGES_PER_SESSION` | `60` | Total protected request allowance, including assets |
+| `EXTRACTION_WINDOW_SECONDS` | `600` | Rolling window for byte and distinct-resource budgets |
+| `BYTES_PER_WINDOW` | `20971520` | Maximum decoded origin body bytes charged per credential in that window |
+| `RESOURCES_PER_WINDOW` | `60` | Maximum distinct path-and-query combinations per credential in that window |
+| `MAX_CONCURRENT_REQUESTS` | `4` | Maximum in-flight origin transfers per credential across all its sessions |
+| `MAX_RESPONSE_BYTES` | `5242880` | Maximum decoded body size of any single response |
 
 The gateway currently supports **read-only origins**. Mutations, WebSockets, upstream login cookies, redirect rewriting, and cross-origin assets are not supported. The strict CSP is suited to self-contained sites; a general-purpose drop-in proxy is not claimed.
 
 Read [deployment requirements](docs/deployment.md) before exposing the gateway.
 
+Budgets count assets, API responses, and attempted resources as well as pages. Byte accounting happens before delivery and can include bytes a disconnected client never receives. A chunk that would cross a limit is withheld entirely; if a response has already started, the connection closes and the client may retain the earlier bytes. See [extraction policy semantics](docs/extraction-policy.md) for recovery, retention, and tuning.
+
 ## Administration
 
 ```sh
 npm run admin -- list
+npm run admin -- usage
 npm run admin -- revoke "<credential-id>"
 ```
 
-Revocation invalidates future requests immediately; it cannot retract bytes already sent. Lost passkeys require revoking the old credential and issuing a new invitation. No password/email recovery bypass is included.
+`usage` shows each credential's active byte/resource totals without revealing visited URLs. Revocation invalidates future requests and is checked before charging each streamed chunk; it cannot retract bytes already sent or queued. Lost passkeys require revoking the old credential and issuing a new invitation. No password/email recovery bypass is included.
 
 ## Development
 
 ```sh
 npm run check
 npm test
+npm run benchmark
 npm run build
 npm audit
 ```
 
-Tests use temporary in-memory stores and loopback servers. They never contact external websites or create real user passkeys. The synthetic authenticator is isolated to `test/` and is never imported by the application. A real-device enrollment check is a separate manual acceptance test.
+Tests use in-memory/temporary SQLite stores and loopback servers. They never contact external websites or create real user passkeys. The synthetic authenticator is isolated to `test/` and used by tests and the benchmark only, never by the application. A real-device enrollment check is a separate manual acceptance test.
 
 Layout: `src/` gateway, storage and WebAuthn; `web/` visitor interface; `scripts/` build and demo; `test/` security regressions; `docs/` design and deployment.
 

@@ -1,6 +1,6 @@
 {
   "name": "human-gate",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "private": true,
   "type": "module",
   "description": "Self-hosted admission gateway for reducing automated extraction",
@@ -11,6 +11,7 @@
     "demo": "node --env-file-if-exists=.env scripts/demo.mjs",
     "admin": "node --env-file-if-exists=.env src/admin.mjs",
     "test": "node --test test/*.test.mjs",
+    "benchmark": "node scripts/benchmark.mjs",
     "check": "node scripts/check.mjs"
   },
   "dependencies": {

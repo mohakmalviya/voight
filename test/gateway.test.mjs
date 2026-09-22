@@ -1,40 +1,12 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import http from 'node:http';
-import { once } from 'node:events';
-import { Store, token } from '../src/store.mjs';
-import { createGateway } from '../src/gateway.mjs';
+import { token } from '../src/store.mjs';
 import { configFromEnv } from '../src/config.mjs';
-import { authenticator } from './authenticator.mjs';
+import { createFixture } from './fixture.mjs';
 
 async function fixture(t, overrides = {}) {
-  let hits = 0, lastHeaders, time = Date.now();
-  const upstream = http.createServer((req, res) => {
-    hits++; lastHeaders = req.headers;
-    if (req.url === '/redirect') { res.writeHead(302, { location: 'https://example.com/' }); return res.end(); }
-    res.setHeader('set-cookie', 'hg_session=attacker'); res.setHeader('cache-control', 'public');
-    res.end('PRIVATE_ORIGIN_CONTENT');
-  }).listen(0, '127.0.0.1'); await once(upstream, 'listening');
-  const store = new Store(':memory:', () => time);
-  const config = { ...configFromEnv({}), upstream: `http://127.0.0.1:${upstream.address().port}`, ...overrides };
-  const audit = [];
-  const gateway = createGateway({ config, store, assets: { '/_gate/index.html': { body: '<h1>Admission required</h1>', type: 'text/html' } }, audit: event => audit.push(event) }).listen(0, '127.0.0.1');
-  await once(gateway, 'listening'); config.origin = `http://localhost:${gateway.address().port}`;
-  t.after(async () => { gateway.closeAllConnections(); upstream.closeAllConnections(); await Promise.all([new Promise(r => gateway.close(r)), new Promise(r => upstream.close(r))]); store.close(); });
-  const headers = { 'user-agent': 'test-browser', host: new URL(config.origin).host };
-  const request = (path = '/', init = {}) => fetch(`${config.origin}${path}`, { ...init, headers: { ...headers, ...init.headers }, redirect: 'manual' });
-  const post = (path, body, cookie, extra = {}) => request(path, { method: 'POST', headers: { origin: config.origin, 'content-type': 'application/json', ...(cookie ? { cookie } : {}), ...extra }, body: JSON.stringify(body) });
-  const auth = authenticator(config.rpID, config.origin);
-  const cookieOf = response => response.headers.get('set-cookie')?.split(';')[0];
-  async function enroll() {
-    const invite = store.invite('test-reader');
-    const options = await post('/_gate/register/options', { invite }); assert.equal(options.status, 200);
-    const challenge = await options.json();
-    const response = await post('/_gate/register/verify', auth.register(challenge.challenge), cookieOf(options));
-    assert.equal(response.status, 200, await response.clone().text());
-    return cookieOf(response);
-  }
-  return { store, config, auth, request, post, enroll, cookieOf, audit, hits: () => hits, lastHeaders: () => lastHeaders, advance: ms => { time += ms; } };
+  const f = await createFixture(overrides); t.after(f.close); return f;
 }
 
 test('unauthenticated paths and forged cookies never reach upstream', async t => {
