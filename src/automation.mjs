@@ -35,6 +35,13 @@ export function syntheticPath(path) {
   return top >= 10 && top / steps >= 0.5;
 }
 
+// Playwright, Puppeteer and most AI-agent browsers drive Chromium over the DevTools protocol, which makes V8 serialise
+// everything the page logs. The check page times logging four Errors against logging four numbers (median of 7 rounds):
+// 1.2 to 1.6 in a person's Edge, even under load, and 4.4 or more with a DevTools client attached (field-measured, see
+// the threat model). An open DevTools window counts too. Firefox and Safari log differently and are not judged.
+export const DEVTOOLS_RATIO = 3;
+const chromiumUA = userAgent => /Chrome\//.test(userAgent) && !/Firefox|CriOS|EdgiOS|FxiOS/.test(userAgent);
+
 // What the human-check page reports. Every field is client-controlled, so missing or malformed values count against it.
 export function humanReport(report, userAgent = '') {
   const value = report && typeof report === 'object' && !Array.isArray(report) ? report : {};
@@ -52,6 +59,8 @@ export function humanReport(report, userAgent = '') {
   const frameless = frame?.[0] === 0 && frame?.[1] === 0 && plugins === 0 && /Chrome\//.test(userAgent) && !/Mobile/.test(userAgent);
   if (declaredUA.test(userAgent) || /HeadlessChrome/i.test(brands) || frameless) found.push('headless');
   if (pointer === 'mouse' && syntheticPath(path)) found.push('synthetic_pointer');
+  const devtools = Number.isFinite(value.devtools) ? Math.max(0, Math.min(value.devtools, 1000)) : null;
+  if (devtools !== null && chromiumUA(userAgent) && devtools >= DEVTOOLS_RATIO) found.push('devtools_protocol');
   const gap = value.pressGap, final = path.at(-1);
   return {
     automated: found.length > 0,
@@ -62,9 +71,18 @@ export function humanReport(report, userAgent = '') {
     // Touch and keys never hover.
     jumped: pointer === 'mouse' && (path.length < 2 || Math.hypot(final[0], final[1]) > 80
       || !(Number.isFinite(gap) && gap >= 0 && gap <= 3)),
-    notes: [...found, `pointer:${pointer}`, `moves:${path.length ? path.length + 1 : 0}`],
+    notes: [...found, `pointer:${pointer}`, `moves:${path.length ? path.length + 1 : 0}`, ...(devtools === null ? [] : [`devtools:${devtools.toFixed(2)}`])],
   };
 }
+
+// Chrome, Edge, Brave and Opera name themselves in their brand list. Playwright's and Puppeteer's bundled browsers
+// say only "Chromium" plus a placeholder ("Not_A Brand"). A few rebuilt browsers do too, so this asks, it does not block.
+const PLACEHOLDER_BRAND = /^Not.?A.?Brand$/i;
+export function unbrandedChromium(brands) {
+  const names = brands.filter(Boolean);
+  return names.length > 0 && names.every(name => name === 'Chromium' || PLACEHOLDER_BRAND.test(name));
+}
+const headerBrands = value => [...String(value ?? '').matchAll(/"([^"]*)"\s*;\s*v=/g)].map(match => match[1]);
 
 // Requests that no current browser would send. Modern Chrome and Firefox always send Fetch Metadata, Chromium also
 // sends client hints in secure contexts, and every browser sends a language with page loads. Scripts usually skip them.
@@ -75,6 +93,8 @@ export function headerAnomaly(headers, { document = false, secureContext = true 
   if (((chrome && +chrome[1] >= 90) || (firefox && +firefox[1] >= 90)) && !headers['sec-fetch-mode']) return 'missing_fetch_metadata';
   // Android in-app browsers (WebView) and Chrome on iOS do not send client hints.
   if (secureContext && chrome && +chrome[1] >= 90 && !/; wv\)|CriOS|Firefox/.test(ua) && !headers['sec-ch-ua']) return 'missing_client_hints';
+  // Desktop only: Android and Linux builds of Chromium are common among people.
+  if (headers['sec-ch-ua'] && /Windows NT|Macintosh/.test(ua) && unbrandedChromium(headerBrands(headers['sec-ch-ua']))) return 'unbranded_chromium';
   // Node's fetch fills in `*`, which no browser sends.
   if (document && (headers['accept-language'] ?? '*').trim() === '*') return 'missing_language';
   return null;

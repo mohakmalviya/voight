@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
 import { createFixture } from './fixture.mjs';
 import { leadingZeroBits } from '../src/gateway.mjs';
-import { humanReport, headerAnomaly } from '../src/automation.mjs';
+import { humanReport, headerAnomaly, unbrandedChromium } from '../src/automation.mjs';
 import { declaredAIAgent } from '../src/agents.mjs';
 import { Store } from '../src/store.mjs';
 import { cloudRanges, sandboxReport } from '../src/sandbox.mjs';
@@ -94,6 +94,8 @@ test('automation is caught even when it performs the hold, and a claimed hold mu
     [{ signals: { path: HAND.concat([[191.2, -8.4, 83]]) } }, 403, 'human_check_failed'], // Real mouse noise, then one leap onto the button.
     [{ signals: { pressGap: undefined } }, 403, 'human_check_failed'],
     [{ signals: { automationGlobals: true } }, 403, 'automation_detected'],
+    // Playwright, Puppeteer or an agent attached to the browser over the DevTools protocol.
+    [{ signals: { devtools: 4.47 }, headers: { 'user-agent': 'Mozilla/5.0 (Windows NT 10.0) Chrome/141.0 Safari/537.36' } }, 403, 'automation_detected'],
     [{ signals: { trusted: false } }, 403, 'human_check_failed'],
     [{ signals: { holdMs: 300 } }, 403, 'human_check_failed'],
     [{ wait: 200 }, 403, 'human_check_failed'], // The page claims a hold the server never saw.
@@ -110,6 +112,14 @@ test('automation is caught even when it performs the hold, and a claimed hold mu
   // Touch and keyboard users never hover, and a frameless phone browser is not headless.
   assert.equal(humanReport({ ...HUMAN, pointer: 'touch', path: [] }).jumped, false);
   assert.equal(humanReport({ ...HUMAN, frame: [0, 0], plugins: 0 }, 'Mozilla/5.0 (Linux; Android 15) Chrome/141.0 Mobile Safari/537.36').automated, false);
+  // The DevTools timing: a person's Edge measured up to 1.6, an attached client 4.4 or more. Other engines are not judged.
+  const chrome = 'Mozilla/5.0 (Windows NT 10.0) Chrome/141.0 Safari/537.36';
+  assert.deepEqual(humanReport({ ...HUMAN, devtools: 4.47 }, chrome).notes, ['devtools_protocol', 'pointer:mouse', 'moves:9', 'devtools:4.47']);
+  assert.equal(humanReport({ ...HUMAN, devtools: 1.57 }, chrome).automated, false);
+  assert.equal(humanReport({ ...HUMAN, devtools: 2.99 }, chrome).automated, false);
+  assert.equal(humanReport({ ...HUMAN, devtools: 3 }, 'Mozilla/5.0 (Windows NT 10.0; rv:143.0) Gecko/20100101 Firefox/143.0').automated, false);
+  assert.equal(humanReport({ ...HUMAN, devtools: 3 }, 'Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X) CriOS/141.0 Mobile/15E148 Safari/604.1').automated, false);
+  for (const devtools of [null, '9', Infinity, NaN, -5]) assert.equal(humanReport({ ...HUMAN, devtools }, chrome).automated, false);
   // A slow, careful hand creeping one pixel at a time is not mistaken for a script.
   assert.equal(humanReport({ ...HUMAN, path: Array.from({ length: 30 }, () => [1, 0, 17]) }).automated, false);
   assert.deepEqual((await f.post('/_gate/human/verify', { signals: HUMAN }, null, visitor())).status, 403); // No issued check.
@@ -212,6 +222,13 @@ test('sandbox signals score servers high and real personal devices at zero', () 
   // iPads send a Mac user agent; touch points mean the desktop checks do not apply.
   const iPad = 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.0 Safari/605.1.15';
   assert.equal(sandboxReport({ ...LAPTOP, gpu: 'Apple GPU', fonts: [], touch: 5, screen: [1024, 1366, 1024, 1366] }, iPad).score, 0);
+  // Playwright's bundled Chromium names no vendor. On Windows and Mac people use branded browsers; on Linux many do not.
+  assert.deepEqual(sandboxReport(LAPTOP, WINDOWS, { brands: 'Chromium|Not_A Brand' }).found, ['unbranded_browser']);
+  assert.equal(sandboxReport(LAPTOP, WINDOWS, { brands: 'Chromium|Not_A Brand' }).score, 3);
+  for (const brands of ['Chromium|Google Chrome|Not=A?Brand', 'Chromium|Microsoft Edge|Not A(Brand', 'Brave|Chromium|Not/A)Brand', '', 7]) assert.equal(sandboxReport(LAPTOP, WINDOWS, { brands }).score, 0);
+  assert.equal(sandboxReport(LAPTOP, LINUX, { brands: 'Chromium|Not_A Brand' }).score, 0);
+  assert.equal(unbrandedChromium(['Not)A;Brand', 'Chromium']), true);
+  assert.equal(unbrandedChromium([]), false);
   // Malformed or missing reports count for nothing; the other checks still apply.
   for (const env of [undefined, null, [], 'x', { gpu: 7, fonts: 'Segoe UI', voices: -1, screen: [1, 2], tz: 5 }]) assert.equal(sandboxReport(env, WINDOWS).score, 0);
 });
@@ -269,6 +286,8 @@ test('in suspicious mode scripts, automation, odd headers and datacenter address
     [{ ...CHROME, 'sec-ch-ua': undefined }, 'missing_client_hints'],
     [{ ...CHROME, 'accept-language': undefined }, 'missing_language'],
     [{ ...CHROME, 'user-agent': WINDOWS.replace('Chrome/', 'HeadlessChrome/') }, 'automation_user_agent'],
+    // Playwright's own Chromium, even with every other header right.
+    [{ ...CHROME, 'sec-ch-ua': '"Chromium";v="141", "Not_A Brand";v="24"' }, 'unbranded_chromium'],
   ];
   for (const [headers, reason] of cases) {
     for (const key of Object.keys(headers)) if (headers[key] === undefined) delete headers[key];
@@ -277,6 +296,8 @@ test('in suspicious mode scripts, automation, odd headers and datacenter address
   }
   assert.equal((await get(f, '/article/1', visitor('198.51.100.9', CHROME))).status, 403);
   assert.equal(lastReason(f), 'suspect:datacenter');
+  // Unbranded Chromium on Linux or Android is common among people and is not asked.
+  assert.equal(headerAnomaly({ ...CHROME, 'user-agent': LINUX, 'sec-ch-ua': '"Chromium";v="141", "Not_A Brand";v="24"' }, { document: true }), null);
   // Python and Go HTTP clients send no Fetch Metadata at all.
   assert.equal(headerAnomaly({ 'user-agent': WINDOWS, 'accept-language': 'en' }, { document: true }), 'missing_fetch_metadata');
   // The page they get is the check, and passing it lets them read.

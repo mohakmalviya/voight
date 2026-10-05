@@ -1,5 +1,6 @@
 import { readFile } from 'node:fs/promises';
 import { parseAddress, parseCIDR } from './network.mjs';
+import { unbrandedChromium } from './automation.mjs';
 
 // Cloud agents and scraping farms run browsers on servers: a datacenter address, no graphics card, no sound card,
 // no screen. None of these prove anything alone (VPNs and virtual desktops share some of them), so they add up to a score.
@@ -58,7 +59,7 @@ export const SOFTWARE_RENDER_HASHES = new Set(['6cf4933af807630f']);
 // Fonts that ship with the operating system and cannot be uninstalled.
 const SYSTEM_FONTS = { windows: ['Segoe UI', 'Calibri', 'Consolas'], mac: ['Helvetica Neue', 'Menlo', 'Avenir'] };
 export const PROBE_FONTS = [...SYSTEM_FONTS.windows, ...SYSTEM_FONTS.mac];
-const WEIGHTS = { datacenter: 2, software_gpu: 2, gpu_spoofed: 3, os_mismatch: 2, virtual_gpu: 1, no_webgl: 1, no_voices: 1, no_media_devices: 1, bare_screen: 1, utc_clock: 1 };
+const WEIGHTS = { datacenter: 2, unbranded_browser: 3, software_gpu: 2, gpu_spoofed: 3, os_mismatch: 2, virtual_gpu: 1, no_webgl: 1, no_voices: 1, no_media_devices: 1, bare_screen: 1, utc_clock: 1 };
 export const SANDBOX_BLOCK_SCORE = 4;
 export const SANDBOX_STRICT_SCORE = 2;
 
@@ -72,13 +73,16 @@ function desktopOS(userAgent, touch) {
 }
 
 // `env` is what the check page reports. Everything in it is client-controlled, so malformed values are ignored.
-export function sandboxReport(env, userAgent = '', { datacenter = false } = {}) {
+// `brands` is the brand list the check page reported, joined with `|`.
+export function sandboxReport(env, userAgent = '', { datacenter = false, brands = '' } = {}) {
   const value = env && typeof env === 'object' && !Array.isArray(env) ? env : {};
   const text = (field, max = 300) => (typeof value[field] === 'string' ? value[field].slice(0, max) : null);
   const count = field => (Number.isSafeInteger(value[field]) && value[field] >= 0 ? value[field] : null);
   const found = [];
   if (datacenter) found.push('datacenter');
   const os = desktopOS(userAgent, count('touch') ?? 0);
+  // Playwright's own Chromium on a Windows or Mac desktop, where people run Chrome, Edge, Brave or Opera.
+  if ((os === 'windows' || os === 'mac') && typeof brands === 'string' && unbrandedChromium(brands.slice(0, 300).split('|'))) found.push('unbranded_browser');
   const gpu = text('gpu');
   if (value.webgl === false) found.push('no_webgl');
   else if (gpu) {

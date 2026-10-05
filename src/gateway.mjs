@@ -188,7 +188,7 @@ export function createGateway({ config, store, assets, auth = webauthn(config), 
             if (!pending || pending.kind !== 'human' || pending.ua !== digest(ua)) throw new Denied(403, 'invalid_challenge');
             const report = humanReport(body.signals, ua);
             signals.push(...report.notes);
-            const sandbox = config.sandboxCheck === 'off' ? null : sandboxReport(body.signals?.env, ua, { datacenter: cloud?.has(ip) ?? false });
+            const sandbox = config.sandboxCheck === 'off' ? null : sandboxReport(body.signals?.env, ua, { datacenter: cloud?.has(ip) ?? false, brands: body.signals?.brands });
             if (sandbox) signals.push(...sandbox.notes);
             if (report.automated) throw new Denied(403, 'automation_detected');
             // The server clock checks the hold too, so a script cannot just claim one.
@@ -310,7 +310,7 @@ export function createGateway({ config, store, assets, auth = webauthn(config), 
       const upstream = await fetch(target, {
         method: req.method, redirect: 'manual', signal: proxySignal,
         headers: {
-          accept: req.headers.accept ?? '*/*', 'user-agent': 'HumanGate/0.7', ...identity,
+          accept: req.headers.accept ?? '*/*', 'user-agent': 'HumanGate/0.8', ...identity,
           ...(req.headers['accept-language'] ? { 'accept-language': req.headers['accept-language'] } : {}),
           ...(range ? { range, ...(req.headers['if-range'] ? { 'if-range': req.headers['if-range'] } : {}) } : {}),
         },
