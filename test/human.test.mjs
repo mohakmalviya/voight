@@ -6,6 +6,7 @@ import { leadingZeroBits } from '../src/gateway.mjs';
 import { humanReport } from '../src/automation.mjs';
 import { declaredAIAgent } from '../src/agents.mjs';
 import { Store } from '../src/store.mjs';
+import { cloudRanges, sandboxReport } from '../src/sandbox.mjs';
 
 const ASSETS = { '/_gate/index.html': { body: '<h1>Admission required</h1>', type: 'text/html' } };
 // A hand slowing down onto the button: uneven steps, roughly one per frame.
@@ -75,7 +76,7 @@ test('holding the button with a real gesture earns a day-long pass bound to this
   assert.equal((await get(f, '/next', visitor('198.51.100.20', { cookie }))).status, 200);
   assert.equal((await get(f, '/next', visitor('203.0.113.10', { cookie, 'user-agent': 'scraper/1.0' }))).status, 403);
   const issued = f.audit.find(event => event.reason === 'human_pass_issued');
-  assert.deepEqual(issued.automationSignals, ['pointer:mouse', 'moves:9']);
+  assert.deepEqual(issued.automationSignals, ['pointer:mouse', 'moves:9', 'sandbox:0']);
   f.advance(86401 * 1000);
   assert.equal((await get(f, '/later', visitor('203.0.113.10', { cookie }))).status, 403); // Passes expire.
 });
@@ -176,4 +177,64 @@ test('unban also clears the counters that caused the block', () => {
   for (const key of ['strike:n1', 'all:n1', 'reader:network:n1']) assert.equal(store.limit(key, 1), true);
   assert.equal(store.banned('n1'), undefined);
   store.close();
+});
+
+// Field-measured environments (see docs/threat-model.md). A real Windows laptop in Edge:
+const WINDOWS = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/141.0.0.0 Safari/537.36';
+const LAPTOP = { webgl: true, gpu: 'ANGLE (NVIDIA, NVIDIA GeForce RTX 5060 Laptop GPU (0x00002D59) Direct3D11 vs_5_0 ps_5_0, D3D11)', glNative: true, render: 'c60b13631bac3fc2',
+  fonts: ['Segoe UI', 'Calibri', 'Consolas'], voices: 3, media: 3, touch: 0, screen: [1536, 864, 1536, 816], tz: 'Asia/Calcutta' };
+// Chrome on a Linux cloud server under a virtual display.
+const SERVER = { webgl: true, gpu: 'ANGLE (Google, Vulkan 1.3.0 (SwiftShader Device (Subzero) (0x0000C0DE)), SwiftShader driver)', glNative: true, render: '6cf4933af807630f',
+  fonts: [], voices: 0, media: 0, touch: 0, screen: [1280, 720, 1280, 720], tz: 'UTC' };
+const LINUX = 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/141.0.0.0 Safari/537.36';
+
+test('cloud ranges merge, match both IP versions, and reject malformed lines', () => {
+  const ranges = cloudRanges(['# comment', '203.0.113.0/25', '203.0.113.128/25 # adjacent', '198.51.100.7', '2001:db8::/32', '']);
+  assert.equal(ranges.size, 3); // The two halves merge into one /24.
+  for (const ip of ['203.0.113.0', '203.0.113.255', '198.51.100.7', '::ffff:203.0.113.9', '2001:db8:ffff::1']) assert.equal(ranges.has(ip), true, ip);
+  for (const ip of ['203.0.114.0', '198.51.100.8', '2001:db9::1', 'not-an-ip']) assert.equal(ranges.has(ip), false, ip);
+  assert.throws(() => cloudRanges(['10.0.0.0/33']), /Invalid cloud range/);
+});
+
+test('sandbox signals score servers high and real personal devices at zero', () => {
+  assert.deepEqual(sandboxReport(LAPTOP, WINDOWS), { score: 0, found: [], notes: ['sandbox:0'] });
+  const server = sandboxReport(SERVER, LINUX, { datacenter: true });
+  assert.deepEqual(server.found, ['datacenter', 'software_gpu', 'no_media_devices', 'bare_screen', 'utc_clock']); // Linux voices are not judged.
+  assert.equal(server.score, 7);
+  // The same server claiming to be Windows: no Windows fonts and no voices give it away even off a datacenter address.
+  assert.deepEqual(sandboxReport(SERVER, WINDOWS).found, ['software_gpu', 'os_mismatch', 'no_voices', 'no_media_devices', 'bare_screen', 'utc_clock']);
+  // A faked GPU name: the pixels are still SwiftShader's, or the getter is patched.
+  assert.deepEqual(sandboxReport({ ...LAPTOP, render: '6cf4933af807630f' }, WINDOWS).found, ['gpu_spoofed']);
+  assert.deepEqual(sandboxReport({ ...LAPTOP, glNative: false }, WINDOWS).found, ['gpu_spoofed']);
+  assert.deepEqual(sandboxReport({ ...LAPTOP, gpu: 'VMware SVGA 3D' }, WINDOWS).found, ['virtual_gpu']);
+  // A person on a VPN that exits from a datacenter is flagged, but only enough for a shorter pass.
+  assert.equal(sandboxReport(LAPTOP, WINDOWS, { datacenter: true }).score, 2);
+  // iPads send a Mac user agent; touch points mean the desktop checks do not apply.
+  const iPad = 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.0 Safari/605.1.15';
+  assert.equal(sandboxReport({ ...LAPTOP, gpu: 'Apple GPU', fonts: [], touch: 5, screen: [1024, 1366, 1024, 1366] }, iPad).score, 0);
+  // Malformed or missing reports count for nothing; the other checks still apply.
+  for (const env of [undefined, null, [], 'x', { gpu: 7, fonts: 'Segoe UI', voices: -1, screen: [1, 2], tz: 5 }]) assert.equal(sandboxReport(env, WINDOWS).score, 0);
+});
+
+test('sandbox scores are only recorded in log mode, and refuse or shorten passes in enforce mode', async t => {
+  const cloud = cloudRanges(['198.51.100.0/24']);
+  const server = { 'x-forwarded-for': '198.51.100.9', 'user-agent': LINUX };
+  const logged = await fixture(t, { cloud });
+  const allowed = await check(logged, { signals: { env: SERVER }, headers: server });
+  assert.equal(allowed.status, 200);
+  assert.deepEqual(logged.audit.find(event => event.reason === 'human_pass_issued').automationSignals.slice(-6),
+    ['datacenter', 'software_gpu', 'no_media_devices', 'bare_screen', 'utc_clock', 'sandbox:7']);
+
+  const f = await fixture(t, { cloud }, { SANDBOX_CHECK: 'enforce' });
+  const refused = await check(f, { signals: { env: SERVER }, headers: server });
+  assert.equal(refused.status, 403); assert.equal(await errorOf(refused), 'sandbox_detected');
+  // A real laptop behind a datacenter VPN: allowed, but the pass lasts an hour.
+  const vpn = await check(f, { signals: { env: LAPTOP }, headers: { 'x-forwarded-for': '198.51.100.10', 'user-agent': WINDOWS } });
+  assert.equal(vpn.status, 200); assert.match(vpn.headers.get('set-cookie'), /Max-Age=3600/);
+  const home = await check(f, { signals: { env: LAPTOP }, headers: { 'x-forwarded-for': '203.0.113.10', 'user-agent': WINDOWS } });
+  assert.equal(home.status, 200); assert.match(home.headers.get('set-cookie'), /Max-Age=86400/);
+
+  const off = await fixture(t, { cloud }, { SANDBOX_CHECK: 'off' });
+  assert.equal((await check(off, { signals: { env: SERVER }, headers: server })).status, 200);
+  assert.ok(!off.audit.find(event => event.reason === 'human_pass_issued').automationSignals.some(note => note.startsWith('sandbox')));
 });

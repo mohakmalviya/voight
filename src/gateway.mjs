@@ -8,6 +8,7 @@ import { automationSignals, reportedWebdriver, automationDecision, humanReport }
 import { denialPage, challengePage, humanPage } from './denial.mjs';
 import { declaredAIAgent, crawlerVerifier } from './agents.mjs';
 import { clientAddress, networkPrefix } from './network.mjs';
+import { sandboxReport, SANDBOX_BLOCK_SCORE, SANDBOX_STRICT_SCORE } from './sandbox.mjs';
 
 const PREFIX = '/_gate/';
 // Public-mode denials that count as a strike when a client keeps sending requests anyway.
@@ -78,7 +79,7 @@ const isDocument = req => req.headers['sec-fetch-dest'] === 'document' || (!req.
 const solved = (challenge, nonce, difficulty) => typeof nonce === 'string' && /^\d{1,16}$/.test(nonce)
   && leadingZeroBits(createHash('sha256').update(`${challenge}:${nonce}`).digest()) >= difficulty;
 
-export function createGateway({ config, store, assets, auth = webauthn(config), resolver, audit = event => console.log(JSON.stringify(event)) }) {
+export function createGateway({ config, store, assets, auth = webauthn(config), resolver, cloud = null, audit = event => console.log(JSON.stringify(event)) }) {
   // One process owns all active transfers. Durable extraction budgets live in SQLite.
   const activeTransfers = new Map();
   const sessionCookie = config.secure ? '__Host-hg_session' : 'hg_session';
@@ -170,13 +171,19 @@ export function createGateway({ config, store, assets, auth = webauthn(config), 
             if (!pending || pending.kind !== 'human' || pending.ua !== digest(ua)) throw new Denied(403, 'invalid_challenge');
             const report = humanReport(body.signals, ua);
             signals.push(...report.notes);
+            const sandbox = config.sandboxCheck === 'off' ? null : sandboxReport(body.signals?.env, ua, { datacenter: cloud?.has(ip) ?? false });
+            if (sandbox) signals.push(...sandbox.notes);
             if (report.automated) throw new Denied(403, 'automation_detected');
             // The server clock checks the hold too, so a script cannot just claim one.
             if (!report.trusted || report.jumped || report.holdMs < HUMAN_HOLD_MS || store.now() - pending.issued < HUMAN_HOLD_MS) throw new Denied(403, 'human_check_failed');
             if (!solved(pending.challenge, body.nonce, pending.difficulty)) throw new Denied(403, 'invalid_solution');
+            const enforce = config.sandboxCheck === 'enforce';
+            if (enforce && sandbox.score >= SANDBOX_BLOCK_SCORE) throw new Denied(403, 'sandbox_detected');
             if (!store.limit(`humanpass:${network}`, config.humanPassesPerHour, 3600000)) throw new Denied(429, 'human_check_limit', 3600);
+            // Some sandbox signals, but not enough to refuse: a pass that must be renewed within the hour.
+            const seconds = enforce && sandbox.score >= SANDBOX_STRICT_SCORE ? Math.min(config.humanPassSeconds, 3600) : config.humanPassSeconds;
             // Lax so the pass survives arriving from a link on another site.
-            setCookie(res, humanCookie, store.pass(ua, config.humanPassSeconds), config.humanPassSeconds, 'Lax');
+            setCookie(res, humanCookie, store.pass(ua, seconds), seconds, 'Lax');
             outcome = 'human_pass_issued'; return send(res, 200, { ok: true });
           }
           throw new Denied(404, 'not_found');
@@ -285,7 +292,7 @@ export function createGateway({ config, store, assets, auth = webauthn(config), 
       const upstream = await fetch(target, {
         method: req.method, redirect: 'manual', signal: proxySignal,
         headers: {
-          accept: req.headers.accept ?? '*/*', 'user-agent': 'HumanGate/0.5', ...identity,
+          accept: req.headers.accept ?? '*/*', 'user-agent': 'HumanGate/0.6', ...identity,
           ...(req.headers['accept-language'] ? { 'accept-language': req.headers['accept-language'] } : {}),
           ...(range ? { range, ...(req.headers['if-range'] ? { 'if-range': req.headers['if-range'] } : {}) } : {}),
         },

@@ -33,6 +33,24 @@ With `HUMAN_CHECK=always`, a request without a valid pass gets the check page (H
 - `human_check_failed`: an untrusted gesture, a hold shorter than 1.5 s by the page's clock *or* the server's, or a mouse that reached the button without moving, arrived in a final leap of more than 80px, or pressed more than 3px from where it last moved (how agent click tools behave);
 - `invalid_solution`: the small proof of work that rides along is wrong.
 
+The page also reports what kind of machine it runs on, and the server adds whether the address is in a cloud provider's published server ranges. Each signal is weighed, because real people share some of them:
+
+| Signal | Weight | Real personal device | Cloud browser |
+| --- | --- | --- | --- |
+| `datacenter` | 2 | Home or mobile ISP (VPNs are the exception) | AWS, Google Cloud, Oracle, DigitalOcean, Linode |
+| `software_gpu` | 2 | NVIDIA, AMD, Intel, Apple | SwiftShader, llvmpipe, Microsoft Basic Render Driver |
+| `gpu_spoofed` | 3 | Native WebGL getter; pixels match the named GPU | Patched getter, or a real GPU's name over SwiftShader's exact pixels |
+| `os_mismatch` | 2 | Windows has Segoe UI / Calibri / Consolas; a Mac has Helvetica Neue / Menlo / Avenir | Windows or Mac user agent without any of them |
+| `virtual_gpu` | 1 | Rare | VMware, VirtualBox, Parallels, QEMU, virtio |
+| `no_voices` | 1 | Windows and macOS ship local speech voices | None (Playwright's bundled Chromium also has none) |
+| `no_media_devices`, `no_webgl` | 1 each | Speakers, microphones; WebGL on | Often none |
+| `bare_screen` | 1 | Taskbar, dock or menu bar takes some height | Virtual display with nothing reserved |
+| `utc_clock` | 1 | Local time zone | Often UTC |
+
+With `SANDBOX_CHECK=enforce`, a score of 4 or more is refused with `sandbox_detected`, and 2–3 gets a pass that lasts an hour. The default, `log`, only records `sandbox:<score>` and the flags, so an operator can measure false positives first. Azure is deliberately not in the address list: Windows 365 and Azure Virtual Desktop put real people on Azure addresses.
+
+Field measurements on a Windows laptop: installed Edge scored 0. Playwright's Chromium in a real window scored 2 (no voices, bare screen) and still got through with a faked curved path. With a software GPU it scored 4; with the GPU name faked the way stealth plugins do, 5; from a datacenter address (simulated), 4. All three were refused.
+
 A pass is a random token, stored hashed, valid for `HUMAN_PASS_SECONDS` and only with the same user agent. Each network can earn `HUMAN_PASSES_PER_HOUR`. More than `HUMAN_PAGES_PER_MINUTE` page loads on one pass revokes it and shows the check again.
 
 | Attack | Handling / limitation |
@@ -44,7 +62,10 @@ A pass is a random token, stored hashed, valid for `HUMAN_PASS_SECONDS` and only
 | Playwright with the webdriver flag hidden, headless | Headless brand, missing frame and plugins, straight-line pointer steps |
 | Headed Playwright with the flag hidden | Straight-line pointer steps |
 | Agent that clicks by jumping the pointer onto the button | Fails: no pointer movement before the press, or the press lands away from the last movement |
-| Script faking a curved, jittery, eased human path in a headed browser | **Gets through** (field-tested). Budgets, re-checks and blocks still apply |
+| Script faking a curved, jittery, eased human path in a headed browser on a personal computer | **Gets through** (field-tested). Budgets, re-checks and blocks still apply |
+| The same script on a cloud server | Refused with `SANDBOX_CHECK=enforce`: datacenter address, software GPU, missing voices and devices, bare screen (field-tested with a software GPU, a faked GPU name, and a simulated datacenter address) |
+| Cloud browser with a real GPU, residential proxy and faked fonts and voices | **Gets through.** Each fake costs the operator money or effort, but none is impossible |
+| Person on a virtual desktop (Citrix, Windows 365) or VPN | Can score 2–4. Why the default is `log` and why `enforce` shortens passes before it refuses |
 | Agent in a person's real browser (Claude in Chrome, Comet, Atlas) | Mainstream agents stop at labelled human checks by design. Not enforced technically |
 | Person passes the check, then lets an agent drive | Only the fast-paging re-check and budgets apply. Not solved here |
 | Copy the pass cookie into another client | Rejected unless the user agent matches; a scraper that copies it too shares that one pass and its re-check |

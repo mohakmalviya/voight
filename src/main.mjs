@@ -4,6 +4,7 @@ import { pathToFileURL } from 'node:url';
 import { configFromEnv } from './config.mjs';
 import { Store } from './store.mjs';
 import { createGateway } from './gateway.mjs';
+import { loadCloudRanges } from './sandbox.mjs';
 
 export async function loadAssets() {
   const assets = {};
@@ -17,7 +18,9 @@ export async function start(config = configFromEnv()) {
   await mkdir(config.dataDir, { recursive: true, mode: 0o700 });
   const assets = await loadAssets();
   const store = new Store(join(config.dataDir, 'gate.sqlite'));
-  const server = createGateway({ config, store, assets });
+  const cloud = config.sandboxCheck === 'off' ? null : await loadCloudRanges(config.cloudRangesFile);
+  if (config.sandboxCheck !== 'off' && !cloud) console.warn(`No cloud ranges at ${config.cloudRangesFile}; run npm run cloud-ranges to score datacenter addresses.`);
+  const server = createGateway({ config, store, assets, cloud });
   server.once('close', () => store.close());
   await new Promise((resolve, reject) => { server.once('error', reject); server.listen(config.port, config.host, resolve); });
   console.log(`Human Gate (${config.mode} mode) listening at ${config.origin}`);

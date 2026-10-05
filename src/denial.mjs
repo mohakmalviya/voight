@@ -25,10 +25,12 @@ export function denialPage(status, reason, retryAfter, requestID) {
       `<div class="tiny">IF YOU ARE A PERSON</div><h2>Open it yourself.</h2><p>Visit this page in your own browser, without an AI assistant or agent acting for you.</p><p class="reference">Reference: ${escape(requestID)}</p>`);
   }
   const title = status === 429 ? 'Access paused.' : automation ? 'Automated access is restricted.'
-    : reason === 'automation_detected' ? 'Automated browser detected.' : 'This request could not be completed.';
+    : reason === 'automation_detected' ? 'Automated browser detected.'
+    : reason === 'sandbox_detected' ? 'Server browser detected.' : 'This request could not be completed.';
   const message = status === 429 ? `This website’s access limit has been reached. Wait at least ${duration(retryAfter)} before trying again.`
     : automation ? 'This browser reported an automation signal. If you are browsing yourself or use assistive tools, contact this website’s operator for help.'
     : reason === 'automation_detected' ? 'This browser appears to be controlled by automation software or an AI agent, so the human check cannot pass. If you are browsing yourself, contact this website’s operator.'
+    : reason === 'sandbox_detected' ? 'This browser appears to be running on a server or in a virtual machine, not on a personal device. If you are browsing yourself, contact this website’s operator.'
     : 'Try again later or contact this website’s operator with the reference below.';
   return page(title, `ACCESS NOTICE / ${status}`, message,
     `<div class="tiny">WHAT YOU CAN DO</div><h2>Contact the operator.</h2><p>They can review the access policy and help if this restriction is unexpected.</p><a class="notice-link" href="">Try this request again →</a><p class="reference">Reference: ${escape(requestID)}</p>`);
