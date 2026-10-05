@@ -383,8 +383,10 @@ export function createGateway({ config, store, assets, auth = webauthn(config), 
         // A person over budget can pay a little CPU instead of waiting. Scrapers pay it on every reset.
         const challenge = network && CLEARABLE_REASONS.has(outcome) && store.clearanceCount(network) < config.clearancesPerWindow;
         const human = ['human_check_required', 'human_recheck'].includes(outcome);
-        send(res, status, human ? humanPage(outcome === 'human_recheck', requestID, config.humanPassSeconds)
-          : challenge ? challengePage(failure.retryAfter, requestID) : denialPage(status, outcome, failure.retryAfter, requestID), 'text/html; charset=utf-8');
+        const site = new URL(config.origin).hostname;
+        send(res, status, human ? humanPage({ recheck: outcome === 'human_recheck', requestID, passSeconds: config.humanPassSeconds, site })
+          : challenge ? challengePage({ retryAfter: failure.retryAfter, requestID, site })
+          : denialPage({ status, reason: outcome, retryAfter: failure.retryAfter, requestID, site }), 'text/html; charset=utf-8');
         return;
       }
       send(res, status, { error: outcome, requestID });

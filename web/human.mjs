@@ -3,6 +3,9 @@ const button = document.querySelector('#hold');
 const label = button.querySelector('span');
 const status = document.querySelector('#status');
 const heading = document.querySelector('#human-heading');
+// The stylesheet swaps the icon, colours and buttons for each state: loading, ready, holding, checking, done, error.
+const panel = document.querySelector('.panel');
+const setState = state => { panel.dataset.state = state; };
 
 async function post(path, body) {
   const response = await fetch(`/_gate/human/${path}`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body), credentials: 'same-origin' });
@@ -45,12 +48,12 @@ addEventListener('pointermove', event => {
   last = event;
 }, { passive: true });
 function fail(message) {
-  heading.textContent = 'Check stopped.'; status.textContent = message;
+  setState('error'); heading.textContent = 'Check stopped'; status.textContent = message;
   button.disabled = true; button.style.setProperty('--fill', 0);
 }
 function begin(event, kind) {
   if (button.disabled || started) return;
-  trusted = event.isTrusted; pointer = kind; started = performance.now();
+  trusted = event.isTrusted; pointer = kind; started = performance.now(); setState('holding');
   label.textContent = 'Keep holding…'; status.textContent = '';
   // Animation frames only draw the fill; they pause in covered windows, so a timer completes the hold.
   const tick = () => {
@@ -63,18 +66,18 @@ function begin(event, kind) {
 function cancel() {
   if (!started) return;
   cancelAnimationFrame(frame); clearTimeout(timer); started = 0;
-  button.style.setProperty('--fill', 0); label.textContent = 'Press and hold';
+  button.style.setProperty('--fill', 0); label.textContent = 'Press and hold'; setState('ready');
   status.textContent = 'Keep holding until the button fills.';
 }
 async function finish() {
   const held = performance.now() - started;
   cancelAnimationFrame(frame); button.style.setProperty('--fill', 1);
-  started = 0; button.disabled = true; label.textContent = 'Checking…';
+  started = 0; button.disabled = true; label.textContent = 'Checking…'; setState('checking');
   try {
     // The probe measures the browser at the end, so a client that attaches after the page loads is still seen.
     const [nonce, report] = await Promise.all([solution, probe.then(measure => measure.seal({ trusted, holdMs: Math.round(held), pointer, path, pressGap }))]);
     await post('verify', { nonce, report });
-    heading.textContent = 'Thanks.'; status.textContent = 'Opening the page…';
+    setState('done'); heading.textContent = 'Verified'; label.textContent = 'Verified'; status.textContent = 'Opening the page…';
     location.reload();
   } catch (error) { fail(error.message); }
 }
@@ -93,6 +96,7 @@ button.addEventListener('keydown', event => {
 });
 button.addEventListener('keyup', event => { if (event.key === ' ' || event.key === 'Enter') { event.preventDefault(); cancel(); } });
 button.addEventListener('contextmenu', event => event.preventDefault());
+document.querySelector('#retry').addEventListener('click', () => location.reload());
 
 (async () => {
   if (!crypto.subtle) throw new Error('This browser cannot run the check here. Try a current browser.');
@@ -103,5 +107,5 @@ button.addEventListener('contextmenu', event => event.preventDefault());
   // This check's own measuring script: different names, numbers and report key every time.
   probe = import(`/_gate/human/probe.js?check=${encodeURIComponent(options.challenge)}`).then(module => module.default());
   await probe;
-  button.disabled = false; status.textContent = 'Ready.';
+  button.disabled = false; setState('ready'); status.textContent = 'Ready.';
 })().catch(error => fail(error.message));
