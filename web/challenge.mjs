@@ -1,6 +1,8 @@
 // Find a nonce whose SHA-256 with the server's challenge starts with `difficulty` zero bits.
 const status = document.querySelector('#status');
 const heading = document.querySelector('#challenge-heading');
+const panel = document.querySelector('.panel');
+document.querySelector('#retry').addEventListener('click', () => location.reload());
 
 async function post(path, body) {
   const response = await fetch(`/_gate/challenge/${path}`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body), credentials: 'same-origin' });
@@ -36,8 +38,8 @@ async function solve() {
 }
 
 solve().then(() => {
-  heading.textContent = 'Done.'; status.textContent = 'Reloading the page…';
+  panel.dataset.state = 'done'; heading.textContent = 'Check complete'; status.textContent = 'Reloading the page…';
   location.reload();
 }, error => {
-  heading.textContent = 'Check stopped.'; status.textContent = error.message;
+  panel.dataset.state = 'error'; heading.textContent = 'Check stopped'; status.textContent = error.message;
 });

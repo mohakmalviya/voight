@@ -78,7 +78,7 @@ try {
       await page.mouse.down();
       await page.waitForFunction(() => document.querySelector('#hold span')?.textContent === 'Checking…', null, { timeout: 5000 }).catch(() => {});
       await page.mouse.up();
-      await page.waitForFunction(() => document.title.startsWith('Article') || document.querySelector('#human-heading')?.textContent === 'Check stopped.', null, { timeout: 15000 }).catch(() => {});
+      await page.waitForFunction(() => document.title.startsWith('Article') || document.querySelector('#human-heading')?.textContent === 'Check stopped', null, { timeout: 15000 }).catch(() => {});
       const title = await page.title();
       const sandbox = verdict.filter(note => !/^(pointer|moves):/.test(note)).join(' ');
       results.push({ variant: name, result: title.startsWith('Article') ? 'GOT IN' : 'stopped', signals: sandbox, message: title.startsWith('Article') ? '' : (await page.locator('#status').textContent()).slice(0, 60) });

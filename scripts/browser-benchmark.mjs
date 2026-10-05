@@ -58,7 +58,7 @@ try {
         if (scenario.masked) {
           for (const id of [1, 2]) { const response = await page.goto(`${f.config.origin}/record?id=${id}`); assert.equal(response.status(), 200); }
           const blocked = await page.goto(`${f.config.origin}/record?id=3`); assert.equal(blocked.status(), 429);
-          await page.getByRole('heading', { name: 'Access paused.' }).waitFor(); budgetBlocked = true;
+          await page.getByRole('heading', { name: 'Access paused' }).waitFor(); budgetBlocked = true;
           if (artifacts) await page.screenshot({ path: join(artifacts, 'limit-desktop.png'), fullPage: true });
         }
       } else {
