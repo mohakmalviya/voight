@@ -1,11 +1,30 @@
 {
   "name": "human-gate",
-  "version": "0.3.0",
+  "version": "0.4.0",
   "private": true,
   "type": "module",
-  "description": "Self-hosted admission gateway for reducing automated extraction",
+  "description": "Self-hosted gateway that makes bulk automated extraction slow and expensive without making visitors log in",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/mohakmalviya/human-gate.git"
+  },
+  "bugs": {
+    "url": "https://github.com/mohakmalviya/human-gate/issues"
+  },
+  "homepage": "https://github.com/mohakmalviya/human-gate#readme",
+  "keywords": [
+    "anti-scraping",
+    "bot-mitigation",
+    "rate-limiting",
+    "reverse-proxy",
+    "proof-of-work",
+    "passkeys",
+    "webauthn",
+    "ai-agents"
+  ],
   "engines": {
-    "node": ">=24.14.0 <25"
+    "node": ">=24.14.0"
   },
   "scripts": {
     "build": "node scripts/build.mjs",

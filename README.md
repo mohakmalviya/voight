@@ -1,45 +1,37 @@
 # Human Gate
 
-A self-hosted gateway for websites that want to restrict automated extraction. Protected content stays behind the gateway until an operator-approved visitor completes passkey verification. Version 0.3 adds optional automation declaration checks, real Chromium UI/passkey evaluation, and a shareable evidence demo.
+A self-hosted gateway that sits in front of a website and makes bulk automated extraction slow and expensive, without making ordinary visitors log in or solve image puzzles.
 
-**Status: early prototype, not production audited.** The repository is private during development. Source is MIT licensed for a future public release; visibility changes require the owner's decision.
+**Status: early prototype, not security-audited.** Read [what this does not promise](#what-this-does-not-promise) before deploying it.
 
-## What works now
+## How it works
 
-- Operator-issued, expiring, single-use enrollment invitations. No public signup or admin HTTP API.
-- WebAuthn registration and authentication with mandatory user verification, origin checks, RP-ID checks, cryptographic signature verification, and single-use challenges.
-- Opaque, server-side sessions: 5-minute default lifetime, HttpOnly / SameSite=Strict cookies, Secure and `__Host-` cookies on HTTPS.
-- Enforcement before every proxied GET or HEAD, including API and asset paths.
-- Atomic request budgets, per-credential and connection rate limits, immediate credential revocation, and logout.
-- Rolling per-credential budgets for decoded response bytes and distinct resources (path plus query), persisted across logins and restarts.
-- Bounded concurrent transfers per credential; client disconnects cancel upstream work and release slots. Streaming stops before a chunk would exceed a byte limit or after credential revocation is observed.
-- Fixed upstream, no redirects followed, no forwarding of browser cookies or Authorization, no shared caching, response-size and upstream-time limits.
-- SQLite persistence, local administration, structured decision logs that omit URLs, IP addresses, invitation codes, cookies, and passkey payloads.
-- Tests exercise actual WebAuthn verification using a software authenticator fixture, plus common admission bypasses.
-- Optional `off` / `observe` / `enforce` automation policy. Observe is the default; neither a passkey nor a negative automation signal proves human control.
-- Browser tests exercise the actual enrollment/login UI, including an explicit suppressed-signal automation case that still gets through.
-- Human-readable access notices and a standalone, offline demo built from recorded evidence.
+Human Gate is a reverse proxy. Every request for your site passes through it, and it decides whether to fetch the page from your origin.
+
+**Public mode** (default): anyone can browse.
+
+1. **Budgets per network.** Each visitor's network (an IPv4 address, or an IPv6 /64) gets a rolling allowance: requests per minute, distinct URLs, decoded bytes and parallel transfers. A person reading a site stays well inside it. A crawler walking every URL does not. Clearing cookies, switching user agent or opening a private window does not reset it.
+2. **A check instead of a wall.** When a browser runs out of budget, it gets a short automatic proof-of-work check (no puzzles, no clicks). Solving it gives that browser its own budget. Each further check from the same network costs twice as much work, and the number per network is capped. One person on a busy shared network gets through. A scraper rotating identities pays more each time.
+3. **Timed blocks for clients that ignore limits.** A client that keeps sending requests after being told to slow down collects strikes, then gets blocked for 5 minutes. Repeat blocks last 4× longer, up to a day. Every block lifts on its own, and the block page says when. Operators can lift one early.
+
+**Private mode** (`MODE=private`): content is only for invited people. Each person enrols a passkey with a one-time invitation, and every request needs a short passkey-backed session. Budgets apply per credential.
+
+Both modes fetch only from one fixed origin, follow no redirects, forward no visitor cookies or credentials, and charge decoded bytes before releasing each chunk.
 
 ## What this does not promise
 
-Passkey verification does **not** prove that a browser is free of agents. An approved user can automate a session, share an invitation, or use a software authenticator. Our test fixture deliberately demonstrates the latter. A browser that has received content can save it or capture screenshots.
+- **It does not tell humans from bots.** It limits volume and raises cost. An agent that browses slowly, within budget, from a normal network looks like a person here. So does a person driving their browser with an AI agent.
+- **Shared networks share a budget.** Offices, campuses, VPNs and mobile carriers (CGNAT) put many people behind one address. The proof-of-work check exists for this, but heavy shared networks can still hit limits. Measure your own traffic before tightening the defaults.
+- **Distributed scrapers get more allowance.** A scraper with many residential IPs gets one budget per network. This raises its cost but does not stop it.
+- **Content that has been delivered can be copied.** Nothing here prevents screenshots, saving or sharing.
+- **It is not DDoS protection.** It is one process with one SQLite database. Put it behind infrastructure that absorbs floods.
+- **The site must be read-only.** Only GET and HEAD are proxied: no form posts, logins or WebSockets yet.
 
-This version excludes unapproved clients and constrains approved sessions. It does not yet provide behavioral bot classification, device attestation, cross-site reputation, large-scale DDoS protection, or complete agent isolation. The [controlled benchmark](docs/benchmark.md) deliberately shows approved automation succeeding within the limits. See [the threat model](docs/threat-model.md) and [roadmap](docs/roadmap.md).
+The [threat model](docs/threat-model.md) lists each known bypass.
 
-## Show the project to evaluators
+## Quick start
 
-```sh
-npm ci
-npm run showcase
-```
-
-Open `dist/human-gate-demo.html` or send that single file to someone. It contains the measured browser and HTTP results, interactive case selection, and links to primary research. It makes no network requests until a reader follows an external link. It is a recorded evidence demo, not a hosted protection service; the repository stays private. See [the share kit](docs/share-kit.md) for a short pitch, walkthrough and feedback template.
-
-Read [research and priorities](docs/research.md), [automation policy](docs/automation-policy.md), and [browser evaluation](docs/browser-benchmark.md) for the design evidence and remaining gaps.
-
-## Run the local demo
-
-Requires Node.js **24.14 or newer in the 24.x line** and npm. Commands work in PowerShell and POSIX shells.
+Requires Node.js 24.14 or newer.
 
 ```sh
 npm ci
@@ -47,72 +39,79 @@ npm run build
 npm run demo
 ```
 
-Open **http://localhost:8787** (use `localhost`, not `127.0.0.1`). In a second terminal, in the same project directory:
+Open **http://localhost:8787**. The demo starts a small origin on `127.0.0.1:8788` and the gateway in public mode. To watch the limits work, run it with a tiny budget:
 
 ```sh
-npm run admin -- invite "My first reader"
+RESOURCES_PER_WINDOW=3 npm run demo
 ```
 
-Copy the invitation privately. Expand **Have an invitation?**, paste it, and register a passkey using your device. Successful verification loads the demo origin. When the session expires, use **Continue with a passkey**.
+Visit a few pages to see the check. Then send a burst of requests with a script, such as `for i in $(seq 20); do curl -s -o /dev/null -w "%{http_code} " "localhost:8787/x?$i"; done`, to trigger a timed block. Lift it with `npm run admin -- unban 127.0.0.1`.
 
-The demo binds its upstream to `127.0.0.1:8788`. Local processes can access that demo port directly; this is a development setup, not protection from programs on your own machine. In deployment the origin must be unreachable except from the gateway.
+For private mode, start the demo with `MODE=private`, then create an invitation with `npm run admin -- invite "My first reader"`. Paste it under **Have an invitation?** and register a passkey.
 
-## Protect an origin
+## Deploy in front of a site
 
-Copy `.env.example` to `.env` and set `PUBLIC_ORIGIN` and `UPSTREAM`. Run `npm start` after building. The public origin must use HTTPS except for local development at `localhost`.
+Copy `.env.example` to `.env`, set `PUBLIC_ORIGIN` and `UPSTREAM`, run `npm run build`, then `npm start`. Read the [deployment requirements](docs/deployment.md) first. The two that matter most:
 
-| Setting | Default | Meaning |
+- **The origin must be unreachable except through the gateway.** Otherwise scrapers go around it.
+- **If a reverse proxy, CDN or load balancer sits in front, set `TRUSTED_PROXIES`.** Without it, every visitor appears to come from the proxy's address and shares one budget. Set it to that proxy's addresses or CIDR ranges and nothing broader.
+
+| Setting | Default (public / private) | Meaning |
 | --- | --- | --- |
-| `PUBLIC_ORIGIN` | `http://localhost:8787` | Exact public origin used for Host, Origin, and WebAuthn checks |
-| `UPSTREAM` | `http://127.0.0.1:8788` | Fixed private content origin; no path or credentials |
+| `MODE` | `public` | `public` for anonymous visitors, `private` for invited passkey holders |
+| `PUBLIC_ORIGIN` | `http://localhost:8787` | Exact browser-facing origin; HTTPS required outside localhost |
+| `UPSTREAM` | `http://127.0.0.1:8788` | Fixed private origin; no path or credentials |
 | `HOST` / `PORT` | `127.0.0.1` / `8787` | Gateway listener |
-| `DATA_DIR` | `./data` | SQLite database and WAL files |
-| `SESSION_SECONDS` | `300` | Maximum session lifetime, no sliding refresh |
-| `REQUESTS_PER_MINUTE` | `30` | Per-credential protected request allowance |
-| `PAGES_PER_SESSION` | `60` | Total protected request allowance, including assets |
-| `EXTRACTION_WINDOW_SECONDS` | `600` | Rolling window for byte and distinct-resource budgets |
-| `BYTES_PER_WINDOW` | `20971520` | Maximum decoded origin body bytes charged per credential in that window |
-| `RESOURCES_PER_WINDOW` | `60` | Maximum distinct path-and-query combinations per credential in that window |
-| `MAX_CONCURRENT_REQUESTS` | `4` | Maximum in-flight origin transfers per credential across all its sessions |
-| `MAX_RESPONSE_BYTES` | `5242880` | Maximum decoded body size of any single response |
-| `AUTOMATION_POLICY` | `observe` | `off`, `observe`, or `enforce` for declared user-agent and WebDriver signals |
+| `DATA_DIR` | `./data` | SQLite database location |
+| `TRUSTED_PROXIES` | *(empty)* | Comma-separated IPs/CIDRs allowed to set `X-Forwarded-For` |
+| `REQUESTS_PER_MINUTE` | `300` / `30` | Requests per subject per minute |
+| `EXTRACTION_WINDOW_SECONDS` | `600` | Rolling window for URL and byte budgets |
+| `RESOURCES_PER_WINDOW` | `1000` / `60` | Distinct path-plus-query URLs per subject per window |
+| `BYTES_PER_WINDOW` | `200 MiB` / `20 MiB` | Decoded response bytes per subject per window |
+| `MAX_CONCURRENT_REQUESTS` | `16` / `4` | In-flight origin transfers per subject |
+| `CONNECTIONS_PER_MINUTE` | `600` / `180` | All requests per network, including gate assets |
+| `MAX_RESPONSE_BYTES` | `5 MiB` | Largest single response |
+| `STRIKES_PER_WINDOW` | `30` | Denied requests a network may send in `STRIKE_WINDOW_SECONDS` before a block |
+| `STRIKE_WINDOW_SECONDS` | `600` | Strike counting window |
+| `BAN_SECONDS` / `MAX_BAN_SECONDS` | `300` / `86400` | First block length, and the cap for repeats (4× each time) |
+| `CHALLENGE_DIFFICULTY` | `16` | Leading zero bits for the first check (about 65k hashes, around a second) |
+| `CLEARANCES_PER_WINDOW` | `5` | Checks one network can pass per `CLEARANCE_SECONDS` |
+| `CLEARANCE_SECONDS` | `3600` | Lifetime of a clearance and its budget |
+| `SESSION_SECONDS` / `PAGES_PER_SESSION` | `300` / `60` | Private mode session lifetime and request cap |
+| `AUTOMATION_POLICY` | `observe` | `off`, `observe` or `enforce` for self-declared automation ([details](docs/automation-policy.md)) |
 
-The gateway currently supports **read-only origins**. Mutations, WebSockets, upstream login cookies, redirect rewriting, and cross-origin assets are not supported. The strict CSP is suited to self-contained sites; a general-purpose drop-in proxy is not claimed.
-
-Read [deployment requirements](docs/deployment.md) before exposing the gateway.
-
-Budgets count assets, API responses, and attempted resources as well as pages. Byte accounting happens before delivery and can include bytes a disconnected client never receives. A chunk that would cross a limit is withheld entirely; if a response has already started, the connection closes and the client may retain the earlier bytes. See [extraction policy semantics](docs/extraction-policy.md) for recovery, retention, and tuning.
+A "subject" is a network or a clearance in public mode, and a credential in private mode. The defaults are starting points, not measured thresholds. Asset-heavy pages spend URL budget quickly, so check your own pages.
 
 ## Administration
 
 ```sh
-npm run admin -- list
-npm run admin -- usage
-npm run admin -- revoke "<credential-id>"
+npm run admin -- bans                  # active blocks (networks are shown as keyed hashes)
+npm run admin -- unban 203.0.113.7     # lift a block; IPv6 lifts the whole /64
+npm run admin -- invite "Reader name"  # private mode: one-time invitation
+npm run admin -- list | usage | revoke <credential-id>
 ```
 
-`usage` shows each credential's active byte/resource totals without revealing visited URLs. Revocation invalidates future requests and is checked before charging each streamed chunk; it cannot retract bytes already sent or queued. Lost passkeys require revoking the old credential and issuing a new invitation. No password/email recovery bypass is included.
+## Privacy
+
+No fingerprinting: no mouse, typing, canvas, font or hardware data. Network addresses are stored only as keyed hashes. URLs are stored as keyed hashes for budget counting and never in plain text. Logs record a random request ID, status, decision reason and byte count. They never record IPs, URLs, user agents or cookies. Expired records are deleted every minute.
 
 ## Development
 
 ```sh
-npm run check
-npm test
-npm run benchmark
-npm run build
-npm audit
+npm run check            # syntax
+npm test                 # unit and integration tests (loopback only)
+npm run benchmark        # HTTP extraction scenarios
+npm run browser:install && npm run benchmark:browser   # real Chromium, virtual passkeys
 ```
 
-To exercise the real browser interface: `npm run browser:install`, then `npm run benchmark:browser`. Browser downloads stay in the checkout's `.cache/playwright` by default; `PLAYWRIGHT_BROWSERS_PATH` can override that location. Browser tests use Chromium's virtual authenticator and do not certify hardware passkeys or human compatibility.
+Layout: `src/` gateway, storage, network handling and WebAuthn; `web/` visitor pages and the proof-of-work client; `test/` regression tests; `scripts/` build, demo and benchmarks; `showcase/` offline evidence demo; `docs/` design notes.
 
-Tests use in-memory/temporary SQLite stores and loopback servers. They never contact external websites or create real user passkeys. The synthetic authenticator is isolated to `test/` and used by tests and the benchmark only, never by the application. A real-device enrollment check is a separate manual acceptance test.
+See [CONTRIBUTING.md](CONTRIBUTING.md). Report vulnerabilities privately as described in [SECURITY.md](SECURITY.md).
 
-Layout: `src/` gateway, storage and WebAuthn; `web/` visitor interface; `showcase/` standalone evidence demo; `scripts/` build, demo and browser evaluation; `test/` security regressions; `docs/` research, design and deployment.
+## Background
 
-## Technical references
+The project started from public discussion about AI agents overwhelming websites and forms. It has no affiliation with any company mentioned in that discussion, and does not reproduce anyone's internal defenses. Design notes and sources are in [docs/research.md](docs/research.md).
 
-- [SimpleWebAuthn server verification](https://simplewebauthn.dev/docs/packages/server)
-- [User verification and passkeys](https://simplewebauthn.dev/docs/advanced/passkeys)
-- [Node.js SQLite](https://nodejs.org/download/release/latest-v24.x/docs/api/sqlite.html)
+## License
 
-The implementation uses these libraries; this project has no affiliation with X, VideoLAN, or their internal defenses.
+[MIT](LICENSE)

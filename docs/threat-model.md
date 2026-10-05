@@ -1,6 +1,35 @@
 # Threat model
 
-## Objective and boundary
+Human Gate has two modes with different objectives. Public mode is described first. The rest of this document, from [private mode](#private-mode-objective-and-boundary) on, covers private mode and the protections both modes share.
+
+## Public mode: objective and boundary
+
+Let anyone read the site, but make bulk extraction cost far more than reading. Concretely: bound the URLs, bytes and request rate any one network can take per window, make every additional identity cost increasing CPU work, and block networks that ignore limits for a time that grows with repeat offences. It does **not** attempt to classify individual requests as human or automated.
+
+Identity is the visitor's network: the IPv4 address, or the IPv6 /64. It comes from the socket peer, or from `X-Forwarded-For` when the peer is in `TRUSTED_PROXIES`. The header is walked from the right, and parsing stops at the first untrusted hop. Networks are stored as HMACs keyed by a per-database secret. A solved proof-of-work check issues a clearance: a random token, stored hashed, with its own budget, valid for `CLEARANCE_SECONDS`.
+
+| Attack | Handling / limitation |
+| --- | --- |
+| Crawl every URL from one address | Distinct-URL and byte budgets per network, then a check, then strikes and a timed block |
+| Clear cookies, change user agent, use private windows | Budgets are keyed by network, so none of these reset them |
+| Rotate IPv6 addresses within a subscriber allocation | Addresses in one /64 share a budget. Larger allocations (/56, /48) can still rotate /64s |
+| Spoof `X-Forwarded-For` | Ignored unless the direct peer is a trusted proxy. Left-of-untrusted entries are never used |
+| Mint many clearances | Capped per network per window; each costs one more bit of work (double the hashing) |
+| Solve one check, share the clearance cookie across a botnet | All holders share that clearance's single budget |
+| Replay or forge a solution | Challenges are single-use, bound to the issuing network, and verified server-side |
+| Solve checks on a GPU or with native code | Feasible. The work cost is a speed bump that scales per identity, not a wall |
+| Keep requesting while over budget | Each denial is a strike. Past `STRIKES_PER_WINDOW` the network is blocked for `BAN_SECONDS`, 4× longer on each repeat within `MAX_BAN_SECONDS`, capped at `MAX_BAN_SECONDS` |
+| Many residential IPs (proxy pools) | Each network gets its own allowance. Total extraction grows with pool size. Not solved here |
+| Slow agent staying within budget | Indistinguishable from a reader. Not solved here |
+| Requests that bypass the gateway | Out of scope: the origin must be reachable only from the gateway |
+| Cache in front of the gateway serving responses | Proxied responses are forced `private`, so shared caches should not store them. A misconfigured CDN can still bypass accounting |
+| Embedding or hotlinking from other sites | Cross-site requests are rejected except top-level navigations, so links from other sites still work |
+
+**False positives are the main cost.** Many people behind one carrier-grade NAT, office or VPN share one budget. The check gives each browser its own budget, but the per-network cap on checks can run out on very large shared networks. Blocks are timed, explained on the block page, and liftable with `admin unban`. No block is permanent. Defaults have not been measured against real traffic, so start with generous limits.
+
+Clients without JavaScript cannot pass the check. They see the wait time instead. Programmatic clients receive JSON with `Retry-After`, and they can solve the check through the same two endpoints if they choose to pay the work.
+
+## Private mode: objective and boundary
 
 Prevent an unapproved client from receiving protected origin content. Restrict the volume an approved credential can retrieve. The visitor's browser and every incoming header are untrusted. Admission is checked on the server before contacting a fixed, private upstream.
 
@@ -56,7 +85,7 @@ Expired invites, challenges, sessions, limit rows, byte buckets and resource rec
 ## Important operational limitations
 
 - One gateway process / one local SQLite database. No multi-region coordination.
-- IP limits use the socket peer. Behind a reverse proxy, the current limit is shared across visitors. Do not enable arbitrary `X-Forwarded-For` trust to work around it.
+- Network limits use the socket peer unless that peer is listed in `TRUSTED_PROXIES`. Behind an unlisted reverse proxy, every visitor shares the proxy's budget. List only the proxies you operate. Trusting a broad range lets anyone in it choose their identity.
 - Same-origin browser XSS or a malicious browser extension can act within an approved session.
 - CSP, anti-caching headers, and iframe restrictions apply to origin responses and may break existing applications.
 - The protected-request budget counts assets as well as document pages.

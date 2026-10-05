@@ -16,6 +16,19 @@ Optional automation declaration policy with observe as default, session-bound re
 
 Primary-source research and prioritized experiments are in [research.md](research.md); [share-kit.md](share-kit.md) explains evaluation and presentation.
 
+## 0.4 — public mode (implemented)
+
+Anonymous visitors browse without an account. Budgets are keyed by network (IPv4 address or IPv6 /64), so cookie and user-agent resets do not help. Over-budget browsers get a no-puzzle proof-of-work check that grants a separate, capped clearance budget. Clients that ignore limits receive timed, self-lifting blocks that escalate on repeats. Also adds trusted-proxy support, origin page-policy passthrough, and operator `bans` / `unban` commands. Passkey admission moved to `MODE=private`.
+
+## Next — public mode in the real world
+
+- Pilot on a real site in observe-first fashion. Measure how often legitimate visitors hit checks or blocks, especially on mobile carrier NAT, before changing defaults.
+- Verified-crawler allowlisting (forward-confirmed reverse DNS for major search engines) so indexing is not throttled.
+- Proxy form submissions (POST) with their own per-network budget. Form spam was the original motivation, and the gateway is read-only today.
+- Optional wider IPv6 grouping (/56, /48) when one subscriber rotates many /64s.
+- A small operator dashboard over the decision log: blocks, checks and budget hits over time.
+- A shared store (e.g. Redis or Postgres) for running more than one gateway instance.
+
 ## Next — actual browser agents and real users
 
 - Extend the controlled Chromium benchmark to named browser agents, other browser engines, hardware passkeys, and consenting legitimate users on our own demo infrastructure.
@@ -30,4 +43,4 @@ Audited trusted-proxy configuration, distributed counters, operator UI, signed r
 
 ## Public release gate
 
-Choose supported threat models; complete security and dependency review; remove experimental assumptions; document bypasses and false-positive measurements; then the owner can explicitly authorize changing repository visibility. No guarantee of complete agent exclusion.
+Before changing repository visibility: security and dependency review of the 0.4 code, documented bypasses (see the threat model), and the owner's explicit decision. No release claims complete agent exclusion.
