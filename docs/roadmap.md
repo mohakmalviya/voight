@@ -20,6 +20,8 @@ Primary-source research and prioritized experiments are in [research.md](researc
 
 Anonymous visitors browse without an account. Budgets are keyed by network (IPv4 address or IPv6 /64), so cookie and user-agent resets do not help. Over-budget browsers get a no-puzzle proof-of-work check that grants a separate, capped clearance budget. Clients that ignore limits receive timed, self-lifting blocks that escalate on repeats. Also adds trusted-proxy support, origin page-policy passthrough, and operator `bans` / `unban` commands. Passkey admission moved to `MODE=private`.
 
+0.4.1 forwards single byte ranges, so video and audio can seek and Safari can play them. Each range is shrunk to fit `MAX_RESPONSE_BYTES`, so media larger than the cap is read in slices. Found by a live test in front of a real site.
+
 ## Next — public mode in the real world
 
 - Pilot on a real site in observe-first fashion. Measure how often legitimate visitors hit checks or blocks, especially on mobile carrier NAT, before changing defaults.
