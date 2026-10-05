@@ -117,9 +117,13 @@ test('automation is caught even when it performs the hold, and a claimed hold mu
   assert.deepEqual(humanReport({ ...HUMAN, devtools: 4.47 }, chrome).notes, ['devtools_protocol', 'pointer:mouse', 'moves:9', 'devtools:4.47']);
   assert.equal(humanReport({ ...HUMAN, devtools: 1.57 }, chrome).automated, false);
   assert.equal(humanReport({ ...HUMAN, devtools: 2.99 }, chrome).automated, false);
+  // An attacker who replaces console.debug to hide the client makes both timings vanish.
+  assert.deepEqual(humanReport({ ...HUMAN, devtools: 0 }, chrome).notes.slice(0, 1), ['console_tampered']);
+  assert.equal(humanReport({ ...HUMAN, devtools: 0.75 }, chrome).automated, false);
   assert.equal(humanReport({ ...HUMAN, devtools: 3 }, 'Mozilla/5.0 (Windows NT 10.0; rv:143.0) Gecko/20100101 Firefox/143.0').automated, false);
   assert.equal(humanReport({ ...HUMAN, devtools: 3 }, 'Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X) CriOS/141.0 Mobile/15E148 Safari/604.1').automated, false);
-  for (const devtools of [null, '9', Infinity, NaN, -5]) assert.equal(humanReport({ ...HUMAN, devtools }, chrome).automated, false);
+  for (const devtools of [null, '9', Infinity, NaN]) assert.equal(humanReport({ ...HUMAN, devtools }, chrome).automated, false);
+  assert.equal(humanReport({ ...HUMAN, devtools: -5 }, chrome).automated, true); // Impossible from the real page.
   // A slow, careful hand creeping one pixel at a time is not mistaken for a script.
   assert.equal(humanReport({ ...HUMAN, path: Array.from({ length: 30 }, () => [1, 0, 17]) }).automated, false);
   assert.deepEqual((await f.post('/_gate/human/verify', { signals: HUMAN }, null, visitor())).status, 403); // No issued check.

@@ -101,6 +101,8 @@ A pass is a random token, stored hashed, valid for `HUMAN_PASS_SECONDS` and only
 | Playwright or an agent attached to a browser the person opened (`connectOverCDP`) | DevTools client (field-tested) |
 | patchright with its bundled Chromium | Not caught by the timing. `unbranded_browser` plus `no_voices` scores 4, refused with `SANDBOX_CHECK=enforce` (field-tested); gets through in `log` mode |
 | patchright or a similar fork driving installed Chrome or Edge with a faked human path | **Gets through** (field-tested). Budgets, re-checks and blocks still apply |
+| Stock Playwright, webdriver flag hidden, `console.debug` replaced by an init script | Refused: `console_tampered` (both timings vanish, ratio below 0.5; field-tested before the rule: got in) |
+| Stock Playwright, webdriver flag hidden, verify request rewritten (`page.route`) to report a normal ratio | **Gets through** (field-tested). Any client-reported signal can be rewritten this way; only server-side limits apply |
 | Agent that clicks by jumping the pointer onto the button | Fails: no pointer movement before the press, or the press lands away from the last movement |
 | Script faking a curved, jittery, eased human path in a headed browser on a personal computer | Caught when driven over the DevTools protocol with `Runtime` enabled (stock Playwright, Puppeteer). A fork that avoids it gets through, as above |
 | The same script on a cloud server | Refused with `SANDBOX_CHECK=enforce`: datacenter address, software GPU, missing voices and devices, bare screen (field-tested with a software GPU, a faked GPU name, and a simulated datacenter address) |

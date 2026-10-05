@@ -40,6 +40,8 @@ export function syntheticPath(path) {
 // 1.2 to 1.6 in a person's Edge, even under load, and 4.4 or more with a DevTools client attached (field-measured, see
 // the threat model). An open DevTools window counts too. Firefox and Safari log differently and are not judged.
 export const DEVTOOLS_RATIO = 3;
+// Logging Errors never costs less than logging numbers. Far below 1 means console.debug was replaced to hide the client.
+export const CONSOLE_TAMPERED_RATIO = 0.5;
 const chromiumUA = userAgent => /Chrome\//.test(userAgent) && !/Firefox|CriOS|EdgiOS|FxiOS/.test(userAgent);
 
 // What the human-check page reports. Every field is client-controlled, so missing or malformed values count against it.
@@ -61,6 +63,7 @@ export function humanReport(report, userAgent = '') {
   if (pointer === 'mouse' && syntheticPath(path)) found.push('synthetic_pointer');
   const devtools = Number.isFinite(value.devtools) ? Math.max(0, Math.min(value.devtools, 1000)) : null;
   if (devtools !== null && chromiumUA(userAgent) && devtools >= DEVTOOLS_RATIO) found.push('devtools_protocol');
+  if (devtools !== null && chromiumUA(userAgent) && devtools < CONSOLE_TAMPERED_RATIO) found.push('console_tampered');
   const gap = value.pressGap, final = path.at(-1);
   return {
     automated: found.length > 0,
