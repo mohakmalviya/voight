@@ -34,11 +34,16 @@ The human check now scores sandbox signals: a datacenter address from published 
 
 `HUMAN_CHECK=suspicious` is the default: ordinary visitors never see the check. It appears for datacenter addresses, automation user agents, headers no current browser sends, networks paging faster than people read, and for an hour after a failed check or block. `OPEN_PATHS` lets feed readers and similar clients through. `HUMAN_CHECK=always` keeps the 0.5 behaviour.
 
+## 0.8 — DevTools-protocol clients (implemented)
+
+The check times console serialisation to find a DevTools-protocol client attached to Chromium, which stops stock Playwright and Puppeteer however they hide flags, fake the mouse path or attach to a browser the person opened. Playwright's bundled, unbranded Chromium on Windows and Mac is asked in `suspicious` mode and weighs 3 in the sandbox score. Forks that avoid the `Runtime` domain (patchright) driving an installed browser still get through.
+
 ## Next — public mode in the real world
 
 - Pilot on a real site in observe-first fashion. Measure how often legitimate visitors hit checks or blocks, especially on mobile carrier NAT, before changing defaults.
 - Measure how often real people fail the human check (trackpads, touch, assistive technology) before tightening any rule.
 - Allow known link-preview fetchers a small budget of page heads, so shared links get previews without opening the site to scrapers using their names.
+- Collect `devtools:<ratio>` from Android, Mac and Linux Chrome before relying on the threshold there.
 - Collect `sandbox:<score>` distributions from real traffic before recommending `SANDBOX_CHECK=enforce`; add render hashes for other software renderers (llvmpipe, Mesa) measured on real servers.
 - Behaviour signals after the check (scrolling, reading time) to catch an agent taking over a passed browser, without injecting scripts into origin pages.
 - Verify Web Bot Auth signatures so an operator can allow specific named agents instead of all or none.

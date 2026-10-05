@@ -24,9 +24,9 @@ Pre-response budget denials return HTTP 429, a stable JSON reason, and `Retry-Af
 | `response_size` | One response exceeds `MAX_RESPONSE_BYTES` | Operator must reduce the response or adjust the cap. Range requests are shrunk to fit and never hit this |
 | `credential_revoked` | Approval was removed during a transfer | Contact the operator |
 | `ai_agent` | The client declared itself an AI agent (user agent, `Signature-Agent`, or an AI app's browser) | None; set `AI_AGENTS=allow` to admit them |
-| `human_check_required` | Public mode, no valid pass, and either `HUMAN_CHECK=always` or a reason in `suspicious` mode (logged as `suspect:<reason>`: `datacenter`, `automation_user_agent`, `not_a_browser`, `missing_fetch_metadata`, `missing_client_hints`, `missing_language`, `paging`, `flagged`) | Pass the check in a browser |
+| `human_check_required` | Public mode, no valid pass, and either `HUMAN_CHECK=always` or a reason in `suspicious` mode (logged as `suspect:<reason>`: `datacenter`, `automation_user_agent`, `not_a_browser`, `missing_fetch_metadata`, `missing_client_hints`, `missing_language`, `unbranded_chromium`, `paging`, `flagged`) | Pass the check in a browser |
 | `human_recheck` | One pass opened more than `HUMAN_PAGES_PER_MINUTE` pages in a minute; the pass is revoked | Pass the check again |
-| `automation_detected` | The check found automation evidence | None for automated clients |
+| `automation_detected` | The check found automation evidence, including a DevTools-protocol client such as Playwright or Puppeteer (`devtools_protocol`) | None for automated clients; a person with DevTools open closes it and reloads |
 | `human_check_failed` | Gesture untrusted, too short, or the pointer never moved | Reload and hold the button |
 | `human_check_limit` | The network earned `HUMAN_PASSES_PER_HOUR` passes this hour | Wait up to an hour |
 | `sandbox_detected` | `SANDBOX_CHECK=enforce` and the browser scored 4+ for server traits (datacenter address, software GPU, missing devices) | Browse from a personal device; operators can use `log` mode |

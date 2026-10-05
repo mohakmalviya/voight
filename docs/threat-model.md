@@ -40,19 +40,40 @@ With `HUMAN_CHECK=suspicious` (the default), a request without a valid pass is l
 | `missing_language` | A page load without `Accept-Language`, or with `*` (Node's `fetch` default) |
 | `paging` | More than `HUMAN_PAGES_PER_MINUTE` page loads a minute from one network without passes; flags the network for an hour |
 
-Field test (Windows laptop): installed Edge read 20 pages a minute with no check and got it at page 21. curl, curl pretending to be Chrome, and headless Playwright got it on the first request. Playwright in a real window read directly, like Edge, until page 21. Live test on a real site over HTTPS (2026-10-05): in `suspicious` mode the owner's laptop browser loaded every page, script, font and video range with no check, while within minutes two datacenter clients and two scripts claiming to be Chrome got it. Switched to `always`, the owner passed first try with a mouse (65 movements, sandbox score 0) and with a phone's touch screen (sandbox score 0). Header rules only catch clients that do not bother to copy a browser; a real browser driven by a script passes them by construction.
+Field test (Windows laptop): installed Edge read 20 pages a minute with no check and got it at page 21. curl, curl pretending to be Chrome, and headless Playwright got it on the first request. Playwright in a real window read directly, like Edge, until page 21. Live test on a real site over HTTPS (2026-10-05): in `suspicious` mode the owner's laptop browser loaded every page, script, font and video range with no check, while within minutes two datacenter clients and two scripts claiming to be Chrome got it. Switched to `always`, the owner passed first try with a mouse (65 movements, sandbox score 0) and with a phone's touch screen (sandbox score 0). A friend's Mac (Chrome 138, trackpad) read directly in `suspicious` mode and passed in `always` mode with 65 movements and sandbox score 1 (`bare_screen`: a hidden Dock or full-screen window leaves no reserved height, a known false positive at weight 1). Header rules only catch clients that do not bother to copy a browser; a real browser driven by a script passes them by construction. The one header rule aimed at automation tools is `unbranded_chromium`: on Windows and Mac, Chrome, Edge, Brave and Opera name themselves in `Sec-CH-UA`, while Playwright's and Puppeteer's bundled Chromium send only `"Chromium"` and a placeholder brand. A few rebuilt browsers do the same, so it asks rather than blocks, and Linux and Android are exempt.
 
 With `HUMAN_CHECK=always`, or once there is a reason, a request without a valid pass gets the check page (HTML) or `403 human_check_required` (anything else). The page asks the server for a challenge, then the visitor holds the button for 1.5 seconds. The verify request reports the webdriver flag, known automation-tool globals, window frame size, plugin count, user-agent brands, whether the gesture was a trusted event, how long it was held, and the last 64 pointer steps. The server rejects:
 
-- `automation_detected`: webdriver set, automation globals present, headless Chrome (a `HeadlessChrome` brand or user agent, or desktop Chrome with no window frame and no plugins), or a mouse path in which one exact step of 2px or more occurs at least 10 times and makes up half or more of such steps;
+- `automation_detected`: webdriver set, automation globals present, headless Chrome (a `HeadlessChrome` brand or user agent, or desktop Chrome with no window frame and no plugins), a mouse path in which one exact step of 2px or more occurs at least 10 times and makes up half or more of such steps, or a DevTools-protocol client attached (`devtools_protocol`, below);
 - `human_check_failed`: an untrusted gesture, a hold shorter than 1.5 s by the page's clock *or* the server's, or a mouse that reached the button without moving, arrived in a final leap of more than 80px, or pressed more than 3px from where it last moved (how agent click tools behave);
 - `invalid_solution`: the small proof of work that rides along is wrong.
+
+### DevTools-protocol clients
+
+Playwright, Puppeteer, Selenium 4 on Chrome, and most AI-agent browsers drive Chromium over the Chrome DevTools Protocol. Their mouse events are trusted and carry the same properties as a person's, so the check cannot tell them apart by input. What gives them away is that they enable the protocol's `Runtime` domain, after which V8 serialises every value the page logs and sends it to the client. At the end of the hold the page times 100 calls of `console.debug` with four `Error` objects against 100 with four numbers, seven rounds, and reports the median ratio (`devtools:<ratio>` in the log). At 3 or more the check fails with `devtools_protocol`. Only Chromium user agents are judged; Firefox and Safari log differently, and Chrome on iOS is WebKit.
+
+Field measurements (Windows laptop, Edge 154, 125% display scaling):
+
+| Browser | Ratio |
+| --- | --- |
+| A person's Edge, no automation | 1.29–1.50 (six runs) |
+| The same, with six CPU-bound processes running | 1.22–1.57 |
+| A person's Edge with DevTools open | 5.00–5.38 (refused; the message says to close DevTools) |
+| Playwright Chromium, headless or in a window, any flags | 4.62–6.13 |
+| Playwright driving installed Edge | 4.77–5.08 |
+| Playwright attached over `connectOverCDP` to an Edge window opened normally | 4.47–6.04 |
+| patchright (Playwright fork that avoids `Runtime.enable`) | 1.20–1.29: **not detected** |
+
+The ratio is self-normalising, so a slow machine is not a problem; what separates the two groups is serialisation work that only exists when a client is listening. Anything client-side can be forged by a client that rewrites the page or calls the endpoints directly. Not yet measured on Android, Mac or Linux Chrome; `devtools:<ratio>` is logged for every check so operators can see their own distribution. Ideas tested and rejected because a person's browser triggered them too: the well-known `Error.stack` getter trick (fires nowhere in Chrome 154), accessor getters on logged `Error.message` and `RegExp.source` (fire in every browser), and float noise in `screenX - clientX` (present on scaled displays).
+
+### Machine signals
 
 The page also reports what kind of machine it runs on, and the server adds whether the address is in a cloud provider's published server ranges. Each signal is weighed, because real people share some of them:
 
 | Signal | Weight | Real personal device | Cloud browser |
 | --- | --- | --- | --- |
 | `datacenter` | 2 | Home or mobile ISP (VPNs are the exception) | AWS, Google Cloud, Oracle, DigitalOcean, Linode |
+| `unbranded_browser` | 3 | Windows and Mac browsers name themselves (Chrome, Edge, Brave, Opera) | Playwright's and Puppeteer's bundled Chromium name only `Chromium` |
 | `software_gpu` | 2 | NVIDIA, AMD, Intel, Apple | SwiftShader, llvmpipe, Microsoft Basic Render Driver |
 | `gpu_spoofed` | 3 | Native WebGL getter; pixels match the named GPU | Patched getter, or a real GPU's name over SwiftShader's exact pixels |
 | `os_mismatch` | 2 | Windows has Segoe UI / Calibri / Consolas; a Mac has Helvetica Neue / Menlo / Avenir | Windows or Mac user agent without any of them |
@@ -73,11 +94,17 @@ A pass is a random token, stored hashed, valid for `HUMAN_PASS_SECONDS` and only
 | Self-declared AI crawler or assistant (GPTBot, ChatGPT-User, ClaudeBot, Claude-User, PerplexityBot, …) | Refused on every request except `robots.txt` |
 | Signed agent (Web Bot Auth: `Signature-Agent`, e.g. ChatGPT agent) | Refused. The signature is not verified because a forged header only shuts out its sender |
 | AI app browser that names itself (e.g. `Claude/2.x` in the user agent) | Refused |
-| Plain Playwright / Puppeteer / Selenium | Webdriver flag, headless traces and straight-line pointer steps |
-| Playwright with the webdriver flag hidden, headless | Headless brand, missing frame and plugins, straight-line pointer steps |
-| Headed Playwright with the flag hidden | Straight-line pointer steps |
+| Plain Playwright / Puppeteer / Selenium | Webdriver flag, headless traces, straight-line pointer steps, DevTools client |
+| Playwright with the webdriver flag hidden, headless | Headless brand, missing frame and plugins, straight-line pointer steps, DevTools client |
+| Headed Playwright with the flag hidden | DevTools client; straight-line pointer steps; unbranded Chromium on Windows or Mac |
+| Playwright driving installed Chrome or Edge, faked human path | DevTools client (field-tested) |
+| Playwright or an agent attached to a browser the person opened (`connectOverCDP`) | DevTools client (field-tested) |
+| patchright with its bundled Chromium | Not caught by the timing. `unbranded_browser` plus `no_voices` scores 4, refused with `SANDBOX_CHECK=enforce` (field-tested); gets through in `log` mode |
+| patchright or a similar fork driving installed Chrome or Edge with a faked human path | **Gets through** (field-tested). Budgets, re-checks and blocks still apply |
+| Stock Playwright, webdriver flag hidden, `console.debug` replaced by an init script | Refused: `console_tampered` (both timings vanish, ratio below 0.5; field-tested before the rule: got in) |
+| Stock Playwright, webdriver flag hidden, verify request rewritten (`page.route`) to report a normal ratio | **Gets through** (field-tested). Any client-reported signal can be rewritten this way; only server-side limits apply |
 | Agent that clicks by jumping the pointer onto the button | Fails: no pointer movement before the press, or the press lands away from the last movement |
-| Script faking a curved, jittery, eased human path in a headed browser on a personal computer | **Gets through** (field-tested). Budgets, re-checks and blocks still apply |
+| Script faking a curved, jittery, eased human path in a headed browser on a personal computer | Caught when driven over the DevTools protocol with `Runtime` enabled (stock Playwright, Puppeteer). A fork that avoids it gets through, as above |
 | The same script on a cloud server | Refused with `SANDBOX_CHECK=enforce`: datacenter address, software GPU, missing voices and devices, bare screen (field-tested with a software GPU, a faked GPU name, and a simulated datacenter address) |
 | Cloud browser with a real GPU, residential proxy and faked fonts and voices | **Gets through.** Each fake costs the operator money or effort, but none is impossible |
 | Person on a virtual desktop (Citrix, Windows 365) or VPN | Can score 2–4. Why the default is `log` and why `enforce` shortens passes before it refuses |

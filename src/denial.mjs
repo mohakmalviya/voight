@@ -29,7 +29,7 @@ export function denialPage(status, reason, retryAfter, requestID) {
     : reason === 'sandbox_detected' ? 'Server browser detected.' : 'This request could not be completed.';
   const message = status === 429 ? `This website’s access limit has been reached. Wait at least ${duration(retryAfter)} before trying again.`
     : automation ? 'This browser reported an automation signal. If you are browsing yourself or use assistive tools, contact this website’s operator for help.'
-    : reason === 'automation_detected' ? 'This browser appears to be controlled by automation software or an AI agent, so the human check cannot pass. If you are browsing yourself, contact this website’s operator.'
+    : reason === 'automation_detected' ? 'This browser appears to be controlled by automation software or an AI agent, so the human check cannot pass. If you have developer tools open, close them and reload. If you are browsing yourself, contact this website’s operator.'
     : reason === 'sandbox_detected' ? 'This browser appears to be running on a server or in a virtual machine, not on a personal device. If you are browsing yourself, contact this website’s operator.'
     : 'Try again later or contact this website’s operator with the reference below.';
   return page(title, `ACCESS NOTICE / ${status}`, message,

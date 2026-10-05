@@ -9,12 +9,25 @@ const AUTOMATION_GLOBALS = ['__playwright__binding__', '__pwInitScripts', '_sele
 const automationGlobals = () => AUTOMATION_GLOBALS.some(name => name in window)
   || Object.keys(document).some(key => key.startsWith('$cdc_') || key.startsWith('cdc_'));
 
+// A DevTools client (Playwright, Puppeteer, agent browsers) makes the browser serialise everything logged here.
+// Logging Errors then costs several times what logging numbers does; without one, both cost about the same.
+// Only Chromium is judged (see DEVTOOLS_RATIO on the server).
+function devtools() {
+  if (!navigator.userAgentData) return null;
+  const error = new Error('check'), errors = [error, error, error, error], numbers = [0, 1, 2, 3];
+  const time = values => { const start = performance.now(); for (let i = 0; i < 100; i++) console.debug(...values); return performance.now() - start; };
+  const ratios = [];
+  for (let round = 0; round < 7; round++) { const plain = time(numbers); ratios.push(time(errors) / Math.max(plain, 0.05)); }
+  console.clear();
+  return +ratios.sort((a, b) => a - b)[3].toFixed(2);
+}
+
 async function post(path, body) {
   const response = await fetch(`/_gate/human/${path}`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body), credentials: 'same-origin' });
   const result = await response.json().catch(() => ({}));
   if (!response.ok) {
     throw new Error(result.error === 'sandbox_detected' ? 'This browser appears to be running on a server or in a virtual machine, not on a personal device. If you are browsing yourself, contact this website’s operator.'
-      : result.error === 'automation_detected' ? 'This browser appears to be controlled by automation software or an AI agent, so it cannot continue.'
+      : result.error === 'automation_detected' ? 'This browser appears to be controlled by automation software or an AI agent, so it cannot continue. If you have developer tools open, close them and reload.'
       : result.error === 'human_check_limit' || response.status === 429 ? 'Too many checks from your network. Wait a while, then reload.'
       : result.error === 'human_check_failed' ? 'Move the pointer onto the button, then hold it until it fills. Reload to try again.'
       : 'The check could not be completed. Reload the page to try again.');
@@ -133,7 +146,9 @@ async function finish() {
   started = 0; button.disabled = true; label.textContent = 'Checking…';
   try {
     const [nonce, env] = await Promise.all([solution, machine]);
-    await post('verify', { nonce, signals: { webdriver: navigator.webdriver === true, automationGlobals: automationGlobals(), trusted, holdMs: Math.round(held), pointer, path, pressGap, ...browserShape(), env } });
+    // Measured at the end, so a client that attaches after the page loads is still seen.
+    let inspected = null; try { inspected = devtools(); } catch {}
+    await post('verify', { nonce, signals: { webdriver: navigator.webdriver === true, automationGlobals: automationGlobals(), trusted, holdMs: Math.round(held), pointer, path, pressGap, devtools: inspected, ...browserShape(), env } });
     heading.textContent = 'Thanks.'; status.textContent = 'Opening the page…';
     location.reload();
   } catch (error) { fail(error.message); }
