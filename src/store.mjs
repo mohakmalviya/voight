@@ -12,6 +12,13 @@ function atomic(db, action) {
 
 const retry = (expires, now) => Math.max(1, Math.ceil((expires - now) / 1000));
 
+// Invited credentials and anonymous public subjects keep separate accounting tables.
+// Credential rows reference real credentials and observe revocation; public rows do not.
+const SCOPES = {
+  credential: { resources: 'resource_usage', bytes: 'byte_usage', subject: 'credential_id' },
+  public: { resources: 'public_resource_usage', bytes: 'public_byte_usage', subject: 'subject' },
+};
+
 export class Store {
   constructor(path, now = Date.now) {
     this.now = now;
@@ -28,7 +35,14 @@ export class Store {
       CREATE TABLE IF NOT EXISTS resource_usage (credential_id TEXT NOT NULL REFERENCES credentials(id), hash TEXT NOT NULL, expires INTEGER NOT NULL, PRIMARY KEY(credential_id,hash));
       CREATE TABLE IF NOT EXISTS byte_usage (credential_id TEXT NOT NULL REFERENCES credentials(id), bucket INTEGER NOT NULL, bytes INTEGER NOT NULL, expires INTEGER NOT NULL, PRIMARY KEY(credential_id,bucket));
       CREATE INDEX IF NOT EXISTS resource_expiry ON resource_usage(expires);
-      CREATE INDEX IF NOT EXISTS byte_expiry ON byte_usage(expires);`);
+      CREATE INDEX IF NOT EXISTS byte_expiry ON byte_usage(expires);
+      CREATE TABLE IF NOT EXISTS public_resource_usage (subject TEXT NOT NULL, hash TEXT NOT NULL, expires INTEGER NOT NULL, PRIMARY KEY(subject,hash));
+      CREATE TABLE IF NOT EXISTS public_byte_usage (subject TEXT NOT NULL, bucket INTEGER NOT NULL, bytes INTEGER NOT NULL, expires INTEGER NOT NULL, PRIMARY KEY(subject,bucket));
+      CREATE INDEX IF NOT EXISTS public_resource_expiry ON public_resource_usage(expires);
+      CREATE INDEX IF NOT EXISTS public_byte_expiry ON public_byte_usage(expires);
+      CREATE TABLE IF NOT EXISTS clearances (hash TEXT PRIMARY KEY, network TEXT NOT NULL, expires INTEGER NOT NULL);
+      CREATE INDEX IF NOT EXISTS clearance_network ON clearances(network, expires);
+      CREATE TABLE IF NOT EXISTS bans (network TEXT PRIMARY KEY, until INTEGER NOT NULL, count INTEGER NOT NULL, forget INTEGER NOT NULL);`);
     this.db.prepare('INSERT OR IGNORE INTO settings VALUES(?,?)').run('resource_hash_key', token());
     this.resourceKey = Buffer.from(this.db.prepare('SELECT value FROM settings WHERE key=?').get('resource_hash_key').value, 'base64url');
   }
@@ -92,36 +106,75 @@ export class Store {
       expires=CASE WHEN expires<=? THEN excluded.expires ELSE expires END RETURNING count`).get(key, now + windowMs, now, now);
     return row.count <= max;
   }
+  resetLimit(key) { this.db.prepare('DELETE FROM limits WHERE key=?').run(key); }
   // A resource is the normalized path plus query. Never persist either in plaintext.
-  beginResource(credentialID, resource, config) {
+  beginResource(subject, resource, config, scope = 'credential') {
+    const t = SCOPES[scope];
     return atomic(this.db, () => {
       const now = this.now();
-      const bytes = this.db.prepare('SELECT COALESCE(SUM(bytes),0) AS total, MIN(expires) AS expires FROM byte_usage WHERE credential_id=? AND expires>?').get(credentialID, now);
+      const bytes = this.db.prepare(`SELECT COALESCE(SUM(bytes),0) AS total, MIN(expires) AS expires FROM ${t.bytes} WHERE ${t.subject}=? AND expires>?`).get(subject, now);
       if (bytes.total >= config.bytesPerWindow) return { reason: 'byte_budget', retryAfter: retry(bytes.expires, now) };
       const hash = createHmac('sha256', this.resourceKey).update(resource).digest('hex');
-      const existing = this.db.prepare('SELECT 1 FROM resource_usage WHERE credential_id=? AND hash=? AND expires>?').get(credentialID, hash, now);
+      const existing = this.db.prepare(`SELECT 1 FROM ${t.resources} WHERE ${t.subject}=? AND hash=? AND expires>?`).get(subject, hash, now);
       if (!existing) {
-        const resources = this.db.prepare('SELECT COUNT(*) AS total, MIN(expires) AS expires FROM resource_usage WHERE credential_id=? AND expires>?').get(credentialID, now);
+        const resources = this.db.prepare(`SELECT COUNT(*) AS total, MIN(expires) AS expires FROM ${t.resources} WHERE ${t.subject}=? AND expires>?`).get(subject, now);
         if (resources.total >= config.resourcesPerWindow) return { reason: 'resource_budget', retryAfter: retry(resources.expires, now) };
       }
-      this.db.prepare(`INSERT INTO resource_usage VALUES(?,?,?) ON CONFLICT(credential_id,hash) DO UPDATE SET expires=MAX(expires,excluded.expires)`)
-        .run(credentialID, hash, now + config.extractionWindowSeconds * 1000);
+      this.db.prepare(`INSERT INTO ${t.resources} VALUES(?,?,?) ON CONFLICT(${t.subject},hash) DO UPDATE SET expires=MAX(expires,excluded.expires)`)
+        .run(subject, hash, now + config.extractionWindowSeconds * 1000);
       return null;
     });
   }
-  chargeBytes(credentialID, size, config) {
+  chargeBytes(subject, size, config, scope = 'credential') {
     if (!Number.isSafeInteger(size) || size < 0) throw new Error('Invalid byte charge');
+    const t = SCOPES[scope];
     return atomic(this.db, () => {
       const now = this.now();
-      if (!this.db.prepare('SELECT 1 FROM credentials WHERE id=? AND revoked=0').get(credentialID)) return { reason: 'credential_revoked', status: 403 };
-      const used = this.db.prepare('SELECT COALESCE(SUM(bytes),0) AS total, MIN(expires) AS expires FROM byte_usage WHERE credential_id=? AND expires>?').get(credentialID, now);
+      if (scope === 'credential' && !this.db.prepare('SELECT 1 FROM credentials WHERE id=? AND revoked=0').get(subject)) return { reason: 'credential_revoked', status: 403 };
+      const used = this.db.prepare(`SELECT COALESCE(SUM(bytes),0) AS total, MIN(expires) AS expires FROM ${t.bytes} WHERE ${t.subject}=? AND expires>?`).get(subject, now);
       if (used.total + size > config.bytesPerWindow) return { reason: 'byte_budget', retryAfter: retry(used.expires ?? now + config.extractionWindowSeconds * 1000, now) };
       // Round expiry UP to the end of this second: never undercount the rolling window.
       const bucket = Math.floor(now / 1000) * 1000;
-      this.db.prepare(`INSERT INTO byte_usage VALUES(?,?,?,?) ON CONFLICT(credential_id,bucket) DO UPDATE SET bytes=bytes+excluded.bytes, expires=MAX(expires,excluded.expires)`)
-        .run(credentialID, bucket, size, bucket + 1000 + config.extractionWindowSeconds * 1000);
+      this.db.prepare(`INSERT INTO ${t.bytes} VALUES(?,?,?,?) ON CONFLICT(${t.subject},bucket) DO UPDATE SET bytes=bytes+excluded.bytes, expires=MAX(expires,excluded.expires)`)
+        .run(subject, bucket, size, bucket + 1000 + config.extractionWindowSeconds * 1000);
       return null;
     });
+  }
+  // Networks are stored as keyed hashes. The raw address never reaches the database.
+  pseudonym(network) { return createHmac('sha256', this.resourceKey).update(`network:${network}`).digest('hex').slice(0, 32); }
+  clearanceCount(network) {
+    return this.db.prepare('SELECT COUNT(*) AS n FROM clearances WHERE network=? AND expires>?').get(network, this.now()).n;
+  }
+  // The count is rechecked inside the transaction so parallel solutions cannot exceed the cap.
+  clear(network, max, seconds) {
+    return atomic(this.db, () => {
+      if (this.clearanceCount(network) >= max) return null;
+      const value = token();
+      this.db.prepare('INSERT INTO clearances VALUES(?,?,?)').run(digest(value), network, this.now() + seconds * 1000);
+      return value;
+    });
+  }
+  clearance(value) {
+    return value ? this.db.prepare('SELECT hash, network FROM clearances WHERE hash=? AND expires>?').get(digest(value), this.now()) : undefined;
+  }
+  banned(network) { return this.db.prepare('SELECT until, count FROM bans WHERE network=? AND until>?').get(network, this.now()); }
+  // A repeat within the memory period lasts four times longer, capped at maxSeconds.
+  ban(network, baseSeconds, maxSeconds) {
+    return atomic(this.db, () => {
+      const now = this.now();
+      const previous = this.db.prepare('SELECT count FROM bans WHERE network=? AND forget>?').get(network, now);
+      const count = (previous?.count ?? 0) + 1;
+      const seconds = Math.min(maxSeconds, baseSeconds * 4 ** (count - 1));
+      const until = now + seconds * 1000;
+      this.db.prepare('INSERT INTO bans VALUES(?,?,?,?) ON CONFLICT(network) DO UPDATE SET until=excluded.until, count=excluded.count, forget=excluded.forget')
+        .run(network, until, count, until + maxSeconds * 1000);
+      return seconds;
+    });
+  }
+  unban(network) { return this.db.prepare('DELETE FROM bans WHERE network=?').run(network).changes > 0; }
+  bans() {
+    return this.db.prepare('SELECT network, until, count FROM bans WHERE until>? ORDER BY until DESC').all(this.now())
+      .map(row => ({ network: row.network, until: new Date(row.until).toISOString(), count: row.count }));
   }
   usage() {
     const now = this.now();
@@ -131,7 +184,11 @@ export class Store {
       FROM credentials`).all(now, now);
   }
   prune() {
-    for (const table of ['invites', 'challenges', 'sessions', 'limits', 'resource_usage', 'byte_usage']) this.db.prepare(`DELETE FROM ${table} WHERE expires<=?`).run(this.now());
+    for (const table of ['invites', 'challenges', 'sessions', 'limits', 'resource_usage', 'byte_usage', 'public_resource_usage', 'public_byte_usage', 'clearances']) {
+      this.db.prepare(`DELETE FROM ${table} WHERE expires<=?`).run(this.now());
+    }
+    // Ban rows outlive the ban itself so a quick repeat offence escalates.
+    this.db.prepare('DELETE FROM bans WHERE forget<=?').run(this.now());
   }
   list() { return this.db.prepare('SELECT id,label,revoked FROM credentials').all(); }
   close() { this.db.close(); }
