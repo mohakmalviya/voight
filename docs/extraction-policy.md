@@ -29,6 +29,7 @@ Pre-response budget denials return HTTP 429, a stable JSON reason, and `Retry-Af
 | `automation_detected` | The check found automation evidence | None for automated clients |
 | `human_check_failed` | Gesture untrusted, too short, or the pointer never moved | Reload and hold the button |
 | `human_check_limit` | The network earned `HUMAN_PASSES_PER_HOUR` passes this hour | Wait up to an hour |
+| `sandbox_detected` | `SANDBOX_CHECK=enforce` and the browser scored 4+ for server traits (datacenter address, software GPU, missing devices) | Browse from a personal device; operators can use `log` mode |
 
 `Retry-After` for extraction limits identifies the next accounting expiry, not a guarantee that the entire requested response will fit then. Gate assets and passkey endpoints have separate connection/authentication limits and do not consume protected content budgets.
 

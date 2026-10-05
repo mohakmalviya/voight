@@ -27,6 +27,9 @@ export function configFromEnv(env = process.env) {
   if (!['always', 'off'].includes(humanCheck)) throw new Error('Invalid HUMAN_CHECK');
   const verifiedCrawlers = (env.VERIFIED_CRAWLERS ?? Object.keys(CRAWLERS).join(',')).split(',').map(name => name.trim().toLowerCase()).filter(name => name && name !== 'off');
   for (const name of verifiedCrawlers) if (!CRAWLERS[name]) throw new Error(`Unknown VERIFIED_CRAWLERS entry ${name}`);
+  const sandboxCheck = env.SANDBOX_CHECK ?? 'log';
+  if (!['off', 'log', 'enforce'].includes(sandboxCheck)) throw new Error('Invalid SANDBOX_CHECK');
+  const dataDir = resolve(env.DATA_DIR ?? './data');
   const origin = new URL(env.PUBLIC_ORIGIN ?? 'http://localhost:8787');
   if (origin.username || origin.password || origin.search || origin.hash || origin.pathname !== '/') throw new Error('PUBLIC_ORIGIN must be an origin');
   if (origin.protocol !== 'https:' && !(origin.protocol === 'http:' && origin.hostname === 'localhost')) throw new Error('Use HTTPS outside localhost');
@@ -38,7 +41,7 @@ export function configFromEnv(env = process.env) {
     mode, automationPolicy,
     origin: origin.origin, rpID: origin.hostname, upstream: upstream.origin,
     host: env.HOST ?? '127.0.0.1', port: integer(env, 'PORT', 8787, 1, 65535),
-    dataDir: resolve(env.DATA_DIR ?? './data'), secure: origin.protocol === 'https:',
+    dataDir, secure: origin.protocol === 'https:',
     trustedProxies: (env.TRUSTED_PROXIES ?? '').split(',').map(entry => entry.trim()).filter(Boolean).map(parseCIDR),
     connectionsPerMinute: integer(env, 'CONNECTIONS_PER_MINUTE', defaults.connections, 1, 100000),
     sessionSeconds: integer(env, 'SESSION_SECONDS', 300, 15, 3600),
@@ -61,5 +64,7 @@ export function configFromEnv(env = process.env) {
     humanPassSeconds: integer(env, 'HUMAN_PASS_SECONDS', 86400, 300, 30 * 86400),
     humanPassesPerHour: integer(env, 'HUMAN_PASSES_PER_HOUR', 60, 1, 100000),
     humanPagesPerMinute: integer(env, 'HUMAN_PAGES_PER_MINUTE', 20, 1, 10000),
+    // Sandbox signals (datacenter address, software GPU, missing devices) scored at the human check. `log` only records them.
+    sandboxCheck, cloudRangesFile: resolve(env.CLOUD_RANGES_FILE ?? resolve(dataDir, 'cloud-ranges.txt')),
   };
 }
