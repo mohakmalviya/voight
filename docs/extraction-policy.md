@@ -21,7 +21,7 @@ Pre-response budget denials return HTTP 429, a stable JSON reason, and `Retry-Af
 | `resource_budget` | Too many distinct active resources | Wait for an older resource to age out; existing resources may still work |
 | `byte_budget` | No room for more decoded content | Wait for charged bytes to age out; a response larger than the entire budget needs operator policy adjustment |
 | `parallel_limit` | Too many simultaneous origin transfers | Retry after transfers finish; suggested delay is one second |
-| `response_size` | One response exceeds `MAX_RESPONSE_BYTES` | Operator must reduce the response or adjust the cap |
+| `response_size` | One response exceeds `MAX_RESPONSE_BYTES` | Operator must reduce the response or adjust the cap. Range requests are shrunk to fit and never hit this |
 | `credential_revoked` | Approval was removed during a transfer | Contact the operator |
 
 `Retry-After` for extraction limits identifies the next accounting expiry, not a guarantee that the entire requested response will fit then. Gate assets and passkey endpoints have separate connection/authentication limits and do not consume protected content budgets.

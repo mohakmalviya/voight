@@ -52,6 +52,17 @@ export function leadingZeroBits(bytes) {
 }
 
 // A shared cache in front of the gateway would serve content without charging any budget.
+// Media players read files in byte ranges. Forward one well-formed range, shrunk so each slice fits the response limit;
+// players read the returned Content-Range and ask for the next slice.
+export function boundedRange(header, max) {
+  const match = /^bytes=(\d{0,15})-(\d{0,15})$/.exec(header?.trim() ?? '');
+  if (!match || (!match[1] && !match[2])) return null;
+  const [, first, last] = match;
+  if (!first) return `bytes=-${Math.min(Number(last), max)}`;
+  const start = Number(first), end = start + max - 1;
+  return `bytes=${start}-${last ? Math.min(Number(last), end) : end}`;
+}
+
 export function privateCacheControl(value) {
   const directives = (value ?? '').split(',').map(d => d.trim()).filter(d => d && !/^(public|private|s-maxage=.*|proxy-revalidate)$/i.test(d));
   if (!value || directives.some(d => /^no-store$/i.test(d))) return 'no-store, private';
@@ -228,17 +239,24 @@ export function createGateway({ config, store, assets, auth = webauthn(config), 
       if (res.destroyed) throw new Denied(499, 'client_closed');
       // Construct a fixed-origin URL without allowing protocol-relative or absolute URL overrides.
       const target = new URL(config.upstream); target.pathname = url.pathname; target.search = url.search;
+      const range = boundedRange(req.headers.range, config.maxResponseBytes);
       const upstream = await fetch(target, {
         method: req.method, redirect: 'manual', signal: proxySignal,
         headers: {
           accept: req.headers.accept ?? '*/*', 'user-agent': 'HumanGate/0.4', ...identity,
           ...(req.headers['accept-language'] ? { 'accept-language': req.headers['accept-language'] } : {}),
+          ...(range ? { range, ...(req.headers['if-range'] ? { 'if-range': req.headers['if-range'] } : {}) } : {}),
         },
       });
       if (upstream.status >= 300 && upstream.status < 400) { await upstream.body?.cancel(); throw new Denied(502, 'upstream_redirect_rejected'); }
       // No cookies, authorization, forwarding headers, cache validators, or untrusted response headers cross this boundary.
+      // If-Range is the one validator forwarded: it only chooses between a slice and the whole file, never a 304.
       res.statusCode = upstream.status;
       res.setHeader('content-type', upstream.headers.get('content-type') ?? 'application/octet-stream');
+      for (const name of ['accept-ranges', 'content-range']) { const value = upstream.headers.get(name); if (value) res.setHeader(name, value); }
+      // fetch decodes compressed bodies, so the length is only known for unencoded responses.
+      const length = upstream.headers.get('content-length');
+      if (length && !upstream.headers.has('content-encoding') && Number(length) <= config.maxResponseBytes) res.setHeader('content-length', length);
       if (isPublic) {
         // The site's own page policy applies to its pages; the gateway's strict defaults are for gate pages.
         for (const name of ['content-security-policy', 'referrer-policy', 'x-robots-tag']) res.removeHeader(name);

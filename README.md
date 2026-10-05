@@ -132,7 +132,7 @@ Read the full [deployment requirements](docs/deployment.md) before going live, a
 | `BYTES_PER_WINDOW` | `200 MiB` / `20 MiB` | Decoded response bytes per subject per window |
 | `MAX_CONCURRENT_REQUESTS` | `16` / `4` | In-flight origin transfers per subject |
 | `CONNECTIONS_PER_MINUTE` | `600` / `180` | All requests per network, including gate assets |
-| `MAX_RESPONSE_BYTES` | `5 MiB` | Largest single response |
+| `MAX_RESPONSE_BYTES` | `5 MiB` | Largest single response. Byte-range requests (video, audio, resumable downloads) are shrunk to fit, so larger media still plays in slices |
 | `STRIKES_PER_WINDOW` | `30` | Denied requests a network may send in `STRIKE_WINDOW_SECONDS` before a block |
 | `STRIKE_WINDOW_SECONDS` | `600` | Strike counting window |
 | `BAN_SECONDS` / `MAX_BAN_SECONDS` | `300` / `86400` | First block length, and the cap for repeats (4× each time) |
