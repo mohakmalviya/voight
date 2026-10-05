@@ -17,7 +17,7 @@ function origin(req, res) {
   res.end(FILE.subarray(start, end + 1));
 }
 async function fixture(t, maxResponseBytes) {
-  const f = await createFixture({ maxResponseBytes }, origin, undefined, { MODE: 'public', TRUSTED_PROXIES: '127.0.0.1' });
+  const f = await createFixture({ maxResponseBytes }, origin, undefined, { MODE: 'public', TRUSTED_PROXIES: '127.0.0.1', HUMAN_CHECK: 'off' });
   t.after(f.close); return f;
 }
 async function get(f, headers) {

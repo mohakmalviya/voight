@@ -22,10 +22,16 @@ Anonymous visitors browse without an account. Budgets are keyed by network (IPv4
 
 0.4.1 forwards single byte ranges, so video and audio can seek and Safari can play them. Each range is shrunk to fit `MAX_RESPONSE_BYTES`, so media larger than the cap is read in slices. Found by a live test in front of a real site.
 
+## 0.5 — keep AI agents out (implemented)
+
+Self-declared AI crawlers and assistants, signed agents (Web Bot Auth) and AI apps whose browser names itself are refused. Every new visitor passes a press-and-hold human check that looks for the webdriver flag, automation globals, headless Chrome, and pointers that jump or move in identical steps. Passes last a day per browser, are capped per network, and are revoked when pages are opened faster than people read. Verified search engines (reverse-then-forward DNS) skip the check. `unban` now clears the counters behind a block. In field tests the check stopped five of six automated-browser variants; a script faking a curved human mouse path got through.
+
 ## Next — public mode in the real world
 
 - Pilot on a real site in observe-first fashion. Measure how often legitimate visitors hit checks or blocks, especially on mobile carrier NAT, before changing defaults.
-- Verified-crawler allowlisting (forward-confirmed reverse DNS for major search engines) so indexing is not throttled.
+- Measure how often real people fail the human check (trackpads, touch, assistive technology) before tightening any rule.
+- Behaviour signals after the check (scrolling, reading time) to catch an agent taking over a passed browser, without injecting scripts into origin pages.
+- Verify Web Bot Auth signatures so an operator can allow specific named agents instead of all or none.
 - Proxy form submissions (POST) with their own per-network budget. Form spam was the original motivation, and the gateway is read-only today.
 - Optional wider IPv6 grouping (/56, /48) when one subscriber rotates many /64s.
 - A small operator dashboard over the decision log: blocks, checks and budget hits over time.

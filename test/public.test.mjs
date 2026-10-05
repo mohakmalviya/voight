@@ -7,7 +7,7 @@ import { leadingZeroBits, privateCacheControl } from '../src/gateway.mjs';
 
 const ASSETS = { '/_gate/index.html': { body: '<h1>Admission required</h1>', type: 'text/html' } };
 async function fixture(t, overrides = {}, env = {}, handler) {
-  const f = await createFixture({ challengeDifficulty: 4, ...overrides }, handler, ASSETS, { MODE: 'public', TRUSTED_PROXIES: '127.0.0.1', ...env });
+  const f = await createFixture({ challengeDifficulty: 4, ...overrides }, handler, ASSETS, { MODE: 'public', TRUSTED_PROXIES: '127.0.0.1', HUMAN_CHECK: 'off', ...env });
   t.after(f.close); return f;
 }
 const from = ip => ({ 'x-forwarded-for': ip });

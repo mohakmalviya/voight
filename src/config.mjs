@@ -1,5 +1,6 @@
 import { resolve } from 'node:path';
 import { parseCIDR } from './network.mjs';
+import { CRAWLERS } from './agents.mjs';
 
 function integer(env, name, fallback, min, max) {
   const value = Number(env[name] ?? fallback);
@@ -20,6 +21,12 @@ export function configFromEnv(env = process.env) {
   const defaults = DEFAULTS[mode];
   const automationPolicy = env.AUTOMATION_POLICY ?? 'observe';
   if (!['off', 'observe', 'enforce'].includes(automationPolicy)) throw new Error('Invalid AUTOMATION_POLICY');
+  const aiAgents = env.AI_AGENTS ?? 'block';
+  if (!['block', 'allow'].includes(aiAgents)) throw new Error('Invalid AI_AGENTS');
+  const humanCheck = env.HUMAN_CHECK ?? 'always';
+  if (!['always', 'off'].includes(humanCheck)) throw new Error('Invalid HUMAN_CHECK');
+  const verifiedCrawlers = (env.VERIFIED_CRAWLERS ?? Object.keys(CRAWLERS).join(',')).split(',').map(name => name.trim().toLowerCase()).filter(name => name && name !== 'off');
+  for (const name of verifiedCrawlers) if (!CRAWLERS[name]) throw new Error(`Unknown VERIFIED_CRAWLERS entry ${name}`);
   const origin = new URL(env.PUBLIC_ORIGIN ?? 'http://localhost:8787');
   if (origin.username || origin.password || origin.search || origin.hash || origin.pathname !== '/') throw new Error('PUBLIC_ORIGIN must be an origin');
   if (origin.protocol !== 'https:' && !(origin.protocol === 'http:' && origin.hostname === 'localhost')) throw new Error('Use HTTPS outside localhost');
@@ -49,5 +56,10 @@ export function configFromEnv(env = process.env) {
     challengeDifficulty: integer(env, 'CHALLENGE_DIFFICULTY', 16, 1, 28),
     clearancesPerWindow: integer(env, 'CLEARANCES_PER_WINDOW', 5, 0, 100),
     clearanceSeconds: integer(env, 'CLEARANCE_SECONDS', 3600, 60, 86400),
+    // Human check (public mode): every new visitor confirms once, then browses for humanPassSeconds.
+    aiAgents, humanCheck, verifiedCrawlers,
+    humanPassSeconds: integer(env, 'HUMAN_PASS_SECONDS', 86400, 300, 30 * 86400),
+    humanPassesPerHour: integer(env, 'HUMAN_PASSES_PER_HOUR', 60, 1, 100000),
+    humanPagesPerMinute: integer(env, 'HUMAN_PAGES_PER_MINUTE', 20, 1, 10000),
   };
 }

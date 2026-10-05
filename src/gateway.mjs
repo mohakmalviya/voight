@@ -4,8 +4,9 @@ import { finished } from 'node:stream/promises';
 import { createHash, randomUUID } from 'node:crypto';
 import { token, digest } from './store.mjs';
 import { webauthn } from './webauthn.mjs';
-import { automationSignals, reportedWebdriver, automationDecision } from './automation.mjs';
-import { denialPage, challengePage } from './denial.mjs';
+import { automationSignals, reportedWebdriver, automationDecision, humanReport } from './automation.mjs';
+import { denialPage, challengePage, humanPage } from './denial.mjs';
+import { declaredAIAgent, crawlerVerifier } from './agents.mjs';
 import { clientAddress, networkPrefix } from './network.mjs';
 
 const PREFIX = '/_gate/';
@@ -15,6 +16,10 @@ const BUDGET_REASONS = new Set(['connection_rate', 'reader_rate', 'resource_budg
 const CLEARABLE_REASONS = new Set(['reader_rate', 'resource_budget', 'byte_budget']);
 // Origin response headers a public site needs to keep working. Everything else is dropped.
 const PUBLIC_RESPONSE_HEADERS = ['content-language', 'content-security-policy', 'x-frame-options', 'x-robots-tag'];
+// How long a person must hold the button. Agent click tools press and release at once.
+export const HUMAN_HOLD_MS = 1500;
+// Answered without any check, so crawlers can read the site's rules.
+const OPEN_PATHS = new Set(['/robots.txt']);
 
 class Denied extends Error {
   constructor(status, reason, retryAfter = 60) { super(reason); this.status = status; this.retryAfter = retryAfter; }
@@ -51,7 +56,6 @@ export function leadingZeroBits(bytes) {
   return bits;
 }
 
-// A shared cache in front of the gateway would serve content without charging any budget.
 // Media players read files in byte ranges. Forward one well-formed range, shrunk so each slice fits the response limit;
 // players read the returned Content-Range and ask for the next slice.
 export function boundedRange(header, max) {
@@ -63,18 +67,25 @@ export function boundedRange(header, max) {
   return `bytes=${start}-${last ? Math.min(Number(last), end) : end}`;
 }
 
+// A shared cache in front of the gateway would serve content without charging any budget.
 export function privateCacheControl(value) {
   const directives = (value ?? '').split(',').map(d => d.trim()).filter(d => d && !/^(public|private|s-maxage=.*|proxy-revalidate)$/i.test(d));
   if (!value || directives.some(d => /^no-store$/i.test(d))) return 'no-store, private';
   return ['private', ...directives].join(', ');
 }
 
-export function createGateway({ config, store, assets, auth = webauthn(config), audit = event => console.log(JSON.stringify(event)) }) {
+const isDocument = req => req.headers['sec-fetch-dest'] === 'document' || (!req.headers['sec-fetch-dest'] && Boolean(req.headers.accept?.includes('text/html')));
+const solved = (challenge, nonce, difficulty) => typeof nonce === 'string' && /^\d{1,16}$/.test(nonce)
+  && leadingZeroBits(createHash('sha256').update(`${challenge}:${nonce}`).digest()) >= difficulty;
+
+export function createGateway({ config, store, assets, auth = webauthn(config), resolver, audit = event => console.log(JSON.stringify(event)) }) {
   // One process owns all active transfers. Durable extraction budgets live in SQLite.
   const activeTransfers = new Map();
   const sessionCookie = config.secure ? '__Host-hg_session' : 'hg_session';
   const ceremonyCookie = config.secure ? '__Host-hg_ceremony' : 'hg_ceremony';
   const clearanceCookie = config.secure ? '__Host-hg_clearance' : 'hg_clearance';
+  const humanCookie = config.secure ? '__Host-hg_human' : 'hg_human';
+  const verifyCrawler = crawlerVerifier(config.verifiedCrawlers ?? [], resolver);
   const setCookie = (res, name, value, seconds, sameSite = 'Strict') => res.appendHeader('set-cookie', `${name}=${value}; Path=/; HttpOnly; SameSite=${sameSite}; Max-Age=${seconds}${config.secure ? '; Secure' : ''}`);
   const server = http.createServer({ maxHeaderSize: 16384 }, async (req, res) => {
     const requestID = randomUUID();
@@ -112,6 +123,8 @@ export function createGateway({ config, store, assets, auth = webauthn(config), 
         if (ban) throw new Denied(429, 'temporarily_blocked', Math.max(1, Math.ceil((ban.until - store.now()) / 1000)));
       }
       if (!store.limit(`all:${network ?? digest(ip)}`, config.connectionsPerMinute)) throw new Denied(429, 'connection_rate');
+      const agent = config.aiAgents === 'block' && !gateAsset && !OPEN_PATHS.has(url.pathname) && declaredAIAgent(req.headers);
+      if (agent) { signals.push(`ai_agent:${agent}`); throw new Denied(403, 'ai_agent'); }
       // Public sites must accept people arriving from links elsewhere; embedding stays same-site.
       const navigation = isPublic && req.headers['sec-fetch-mode'] === 'navigate' && ['GET', 'HEAD'].includes(req.method);
       if (req.headers['sec-fetch-site'] === 'cross-site' && !navigation) throw new Denied(403, 'cross_site');
@@ -138,14 +151,33 @@ export function createGateway({ config, store, assets, auth = webauthn(config), 
           if (url.pathname === `${PREFIX}challenge/verify`) {
             const pending = store.takeChallenge(cookie(req, ceremonyCookie));
             if (!pending || pending.kind !== 'work' || pending.network !== network) throw new Denied(403, 'invalid_challenge');
-            if (typeof body.nonce !== 'string' || !/^\d{1,16}$/.test(body.nonce)) throw new Denied(403, 'invalid_solution');
-            const hash = createHash('sha256').update(`${pending.challenge}:${body.nonce}`).digest();
-            if (leadingZeroBits(hash) < pending.difficulty) throw new Denied(403, 'invalid_solution');
+            if (!solved(pending.challenge, body.nonce, pending.difficulty)) throw new Denied(403, 'invalid_solution');
             const clearance = store.clear(network, config.clearancesPerWindow, config.clearanceSeconds);
             if (!clearance) throw new Denied(429, 'challenge_limit', config.clearanceSeconds);
             // Lax so the clearance survives arriving from a link on another site.
             setCookie(res, clearanceCookie, clearance, config.clearanceSeconds, 'Lax');
             outcome = 'clearance_issued'; return send(res, 200, { ok: true });
+          }
+          if (config.humanCheck === 'always' && url.pathname === `${PREFIX}human/options`) {
+            // A small proof of work rides along, so forging passes without a browser still costs something.
+            const challenge = token(), difficulty = config.challengeDifficulty;
+            store.takeChallenge(cookie(req, ceremonyCookie));
+            setCookie(res, ceremonyCookie, store.challenge({ kind: 'human', challenge, difficulty, ua: digest(ua), issued: store.now() }), 120);
+            outcome = 'human_check_issued'; return send(res, 200, { challenge, difficulty, holdMs: HUMAN_HOLD_MS });
+          }
+          if (config.humanCheck === 'always' && url.pathname === `${PREFIX}human/verify`) {
+            const pending = store.takeChallenge(cookie(req, ceremonyCookie));
+            if (!pending || pending.kind !== 'human' || pending.ua !== digest(ua)) throw new Denied(403, 'invalid_challenge');
+            const report = humanReport(body.signals, ua);
+            signals.push(...report.notes);
+            if (report.automated) throw new Denied(403, 'automation_detected');
+            // The server clock checks the hold too, so a script cannot just claim one.
+            if (!report.trusted || report.jumped || report.holdMs < HUMAN_HOLD_MS || store.now() - pending.issued < HUMAN_HOLD_MS) throw new Denied(403, 'human_check_failed');
+            if (!solved(pending.challenge, body.nonce, pending.difficulty)) throw new Denied(403, 'invalid_solution');
+            if (!store.limit(`humanpass:${network}`, config.humanPassesPerHour, 3600000)) throw new Denied(429, 'human_check_limit', 3600);
+            // Lax so the pass survives arriving from a link on another site.
+            setCookie(res, humanCookie, store.pass(ua, config.humanPassSeconds), config.humanPassSeconds, 'Lax');
+            outcome = 'human_pass_issued'; return send(res, 200, { ok: true });
           }
           throw new Denied(404, 'not_found');
         }
@@ -204,6 +236,16 @@ export function createGateway({ config, store, assets, auth = webauthn(config), 
       const declared = automationDecision(config.automationPolicy, ua, null, false);
       if (declared) throw new Denied(403, declared);
       // The subject is whoever the budgets are charged to: a credential, a clearance, or a network.
+      if (isPublic && config.humanCheck === 'always' && !OPEN_PATHS.has(url.pathname)) {
+        const human = store.human(cookie(req, humanCookie), ua);
+        const crawler = !human && await verifyCrawler(ip, ua);
+        if (crawler) signals.push(`crawler:${crawler}`);
+        else if (!human) throw new Denied(403, 'human_check_required');
+        else if (isDocument(req) && !store.limit(`humannav:${human.hash}`, config.humanPagesPerMinute)) {
+          // Page after page faster than anyone reads: an agent may have taken over. Ask again.
+          store.revokePass(human.hash); throw new Denied(403, 'human_recheck');
+        }
+      }
       let subject, scope, identity;
       if (isPublic) {
         // Clearing cookies only drops a visitor back onto the network's shared budget.
@@ -243,7 +285,7 @@ export function createGateway({ config, store, assets, auth = webauthn(config), 
       const upstream = await fetch(target, {
         method: req.method, redirect: 'manual', signal: proxySignal,
         headers: {
-          accept: req.headers.accept ?? '*/*', 'user-agent': 'HumanGate/0.4', ...identity,
+          accept: req.headers.accept ?? '*/*', 'user-agent': 'HumanGate/0.5', ...identity,
           ...(req.headers['accept-language'] ? { 'accept-language': req.headers['accept-language'] } : {}),
           ...(range ? { range, ...(req.headers['if-range'] ? { 'if-range': req.headers['if-range'] } : {}) } : {}),
         },
@@ -290,7 +332,9 @@ export function createGateway({ config, store, assets, auth = webauthn(config), 
       if (['GET', 'HEAD'].includes(req.method) && req.headers.accept?.includes('text/html')) {
         // A person over budget can pay a little CPU instead of waiting. Scrapers pay it on every reset.
         const challenge = network && CLEARABLE_REASONS.has(outcome) && store.clearanceCount(network) < config.clearancesPerWindow;
-        send(res, status, challenge ? challengePage(failure.retryAfter, requestID) : denialPage(status, outcome, failure.retryAfter, requestID), 'text/html; charset=utf-8');
+        const human = ['human_check_required', 'human_recheck'].includes(outcome);
+        send(res, status, human ? humanPage(outcome === 'human_recheck', requestID)
+          : challenge ? challengePage(failure.retryAfter, requestID) : denialPage(status, outcome, failure.retryAfter, requestID), 'text/html; charset=utf-8');
         return;
       }
       send(res, status, { error: outcome, requestID });
