@@ -27,7 +27,22 @@ Identity is the visitor's network: the IPv4 address, or the IPv6 /64. It comes f
 
 ### AI agents and the human check
 
-With `HUMAN_CHECK=always`, a request without a valid pass gets the check page (HTML) or `403 human_check_required` (anything else). The page asks the server for a challenge, then the visitor holds the button for 1.5 seconds. The verify request reports the webdriver flag, known automation-tool globals, window frame size, plugin count, user-agent brands, whether the gesture was a trusted event, how long it was held, and the last 64 pointer steps. The server rejects:
+With `HUMAN_CHECK=suspicious` (the default), a request without a valid pass is let through unless there is a reason to ask, logged as `suspect:<reason>`:
+
+| Reason | Trigger |
+| --- | --- |
+| `flagged` | The network failed the check (`automation_detected`, `sandbox_detected`, `human_check_failed`), was blocked, or paged too fast in the last hour |
+| `datacenter` | The address is in the cloud ranges file |
+| `automation_user_agent` | `HeadlessChrome`, `Playwright`, `Puppeteer` or `Selenium` in the user agent |
+| `not_a_browser` | The user agent does not start like a browser's (curl, Python, Go, feed readers) |
+| `missing_fetch_metadata` | Chrome or Firefox 90+ without `Sec-Fetch-Mode`, which both always send |
+| `missing_client_hints` | Chromium 90+ without `Sec-CH-UA` in a secure context (Android WebView and Chrome on iOS are exempt) |
+| `missing_language` | A page load without `Accept-Language`, or with `*` (Node's `fetch` default) |
+| `paging` | More than `HUMAN_PAGES_PER_MINUTE` page loads a minute from one network without passes; flags the network for an hour |
+
+Field test (Windows laptop): installed Edge read 20 pages a minute with no check and got it at page 21. curl, curl pretending to be Chrome, and headless Playwright got it on the first request. Playwright in a real window read directly, like Edge, until page 21. Header rules only catch clients that do not bother to copy a browser; a real browser driven by a script passes them by construction.
+
+With `HUMAN_CHECK=always`, or once there is a reason, a request without a valid pass gets the check page (HTML) or `403 human_check_required` (anything else). The page asks the server for a challenge, then the visitor holds the button for 1.5 seconds. The verify request reports the webdriver flag, known automation-tool globals, window frame size, plugin count, user-agent brands, whether the gesture was a trusted event, how long it was held, and the last 64 pointer steps. The server rejects:
 
 - `automation_detected`: webdriver set, automation globals present, headless Chrome (a `HeadlessChrome` brand or user agent, or desktop Chrome with no window frame and no plugins), or a mouse path in which one exact step of 2px or more occurs at least 10 times and makes up half or more of such steps;
 - `human_check_failed`: an untrusted gesture, a hold shorter than 1.5 s by the page's clock *or* the server's, or a mouse that reached the button without moving, arrived in a final leap of more than 80px, or pressed more than 3px from where it last moved (how agent click tools behave);
@@ -68,6 +83,8 @@ A pass is a random token, stored hashed, valid for `HUMAN_PASS_SECONDS` and only
 | Person on a virtual desktop (Citrix, Windows 365) or VPN | Can score 2–4. Why the default is `log` and why `enforce` shortens passes before it refuses |
 | Agent in a person's real browser (Claude in Chrome, Comet, Atlas) | Mainstream agents stop at labelled human checks by design. Not enforced technically |
 | Person passes the check, then lets an agent drive | Only the fast-paging re-check and budgets apply. Not solved here |
+| Script driving a real browser from a home connection, reading slowly (`suspicious` mode) | **Not asked.** Same headers as a person; only paging, budgets and blocks apply. `HUMAN_CHECK=always` asks it, and the pointer rules then apply |
+| Script copying every browser header from a datacenter | Asked (`datacenter`), then refused by the sandbox score with `SANDBOX_CHECK=enforce` |
 | Copy the pass cookie into another client | Rejected unless the user agent matches; a scraper that copies it too shares that one pass and its re-check |
 | Call the endpoints directly with forged signals | Possible for a determined author; each attempt needs a fresh challenge, a real 1.5 s wait and a proof of work, and passes are capped per network |
 | Spoof a search-engine user agent | Skips the check only when reverse DNS lands in the engine's domain and resolves back to the same address |

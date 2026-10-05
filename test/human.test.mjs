@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
 import { createFixture } from './fixture.mjs';
 import { leadingZeroBits } from '../src/gateway.mjs';
-import { humanReport } from '../src/automation.mjs';
+import { humanReport, headerAnomaly } from '../src/automation.mjs';
 import { declaredAIAgent } from '../src/agents.mjs';
 import { Store } from '../src/store.mjs';
 import { cloudRanges, sandboxReport } from '../src/sandbox.mjs';
@@ -29,7 +29,7 @@ const resolver = {
 };
 
 async function fixture(t, overrides = {}, env = {}) {
-  const f = await createFixture({ challengeDifficulty: 4, resolver, ...overrides }, undefined, ASSETS, { MODE: 'public', TRUSTED_PROXIES: '127.0.0.1', ...env });
+  const f = await createFixture({ challengeDifficulty: 4, resolver, ...overrides }, undefined, ASSETS, { MODE: 'public', TRUSTED_PROXIES: '127.0.0.1', HUMAN_CHECK: 'always', ...env });
   t.after(f.close); return f;
 }
 const visitor = (ip = '203.0.113.10', extra = {}) => ({ 'x-forwarded-for': ip, ...extra });
@@ -237,4 +237,79 @@ test('sandbox scores are only recorded in log mode, and refuse or shorten passes
   const off = await fixture(t, { cloud }, { SANDBOX_CHECK: 'off' });
   assert.equal((await check(off, { signals: { env: SERVER }, headers: server })).status, 200);
   assert.ok(!off.audit.find(event => event.reason === 'human_pass_issued').automationSignals.some(note => note.startsWith('sandbox')));
+});
+
+// What Chrome on Windows sends for a page load.
+const CHROME = { 'user-agent': WINDOWS, accept: 'text/html,application/xhtml+xml', 'accept-language': 'en-IN,en;q=0.9', 'sec-fetch-mode': 'navigate',
+  'sec-fetch-dest': 'document', 'sec-fetch-site': 'none', 'sec-ch-ua': '"Chromium";v="141", "Google Chrome";v="141"' };
+const suspicious = (t, overrides = {}, env = {}) => fixture(t, overrides, { HUMAN_CHECK: 'suspicious', ...env });
+const lastReason = f => f.audit.at(-1).automationSignals.find(note => note.startsWith('suspect:'));
+
+test('in suspicious mode a person in an ordinary browser never sees the check', async t => {
+  const f = await suspicious(t);
+  for (const path of ['/', '/article/1', '/article/2']) assert.equal((await get(f, path, visitor('203.0.113.10', CHROME))).text, 'PRIVATE_ORIGIN_CONTENT');
+  // Images and scripts carry no language header in some browsers, and are not page loads.
+  const image = { ...CHROME, accept: 'image/avif,image/webp', 'sec-fetch-dest': 'image', 'sec-fetch-mode': 'no-cors', 'accept-language': undefined };
+  delete image['accept-language'];
+  assert.equal((await get(f, '/logo.png', visitor('203.0.113.10', image))).status, 200);
+  // Browsers that legitimately send fewer headers: Firefox (no client hints), Android in-app browsers, older Safari.
+  const firefox = { ...CHROME, 'user-agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:143.0) Gecko/20100101 Firefox/143.0' }; delete firefox['sec-ch-ua'];
+  const webview = { ...firefox, 'user-agent': 'Mozilla/5.0 (Linux; Android 15; Pixel 9; wv) AppleWebKit/537.36 (KHTML, like Gecko) Version/4.0 Chrome/141.0.0.0 Mobile Safari/537.36' };
+  const safari = { 'user-agent': 'Mozilla/5.0 (iPhone; CPU iPhone OS 16_1 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/16.1 Mobile/15E148 Safari/604.1', accept: 'text/html', 'accept-language': 'en-GB' };
+  for (const headers of [firefox, webview, safari]) assert.equal((await get(f, '/article/3', visitor('203.0.113.11', headers))).status, 200, headers['user-agent']);
+});
+
+test('in suspicious mode scripts, automation, odd headers and datacenter addresses get the check', async t => {
+  const f = await suspicious(t, { cloud: cloudRanges(['198.51.100.0/24']) });
+  const cases = [
+    [{ 'user-agent': 'curl/8.9.1', accept: '*/*' }, 'not_a_browser'],
+    [{ 'user-agent': 'python-requests/2.32.3' }, 'not_a_browser'],
+    // A script borrowing Chrome's name. Node's fetch adds Fetch Metadata itself, so the missing client hints give it away.
+    [{ 'user-agent': WINDOWS, accept: 'text/html', 'accept-language': 'en' }, 'missing_client_hints'],
+    [{ ...CHROME, 'sec-ch-ua': undefined }, 'missing_client_hints'],
+    [{ ...CHROME, 'accept-language': undefined }, 'missing_language'],
+    [{ ...CHROME, 'user-agent': WINDOWS.replace('Chrome/', 'HeadlessChrome/') }, 'automation_user_agent'],
+  ];
+  for (const [headers, reason] of cases) {
+    for (const key of Object.keys(headers)) if (headers[key] === undefined) delete headers[key];
+    const response = await get(f, '/article/1', visitor('203.0.113.20', headers));
+    assert.equal(response.status, 403, reason); assert.equal(lastReason(f), `suspect:${reason}`);
+  }
+  assert.equal((await get(f, '/article/1', visitor('198.51.100.9', CHROME))).status, 403);
+  assert.equal(lastReason(f), 'suspect:datacenter');
+  // Python and Go HTTP clients send no Fetch Metadata at all.
+  assert.equal(headerAnomaly({ 'user-agent': WINDOWS, 'accept-language': 'en' }, { document: true }), 'missing_fetch_metadata');
+  // The page they get is the check, and passing it lets them read.
+  const html = await get(f, '/article/1', visitor('203.0.113.21', { 'user-agent': 'curl/8.9.1', accept: 'text/html' }));
+  assert.match(html.text, /Confirm you are human/);
+  const passed = await check(f, { headers: visitor('198.51.100.9', CHROME) });
+  assert.equal(passed.status, 200);
+  assert.equal((await get(f, '/article/1', visitor('198.51.100.9', { ...CHROME, cookie: f.cookieOf(passed) }))).status, 200);
+});
+
+test('in suspicious mode fast paging or a failed check makes the whole network confirm for an hour', async t => {
+  const f = await suspicious(t, {}, { HUMAN_PAGES_PER_MINUTE: '5' });
+  for (let i = 0; i < 5; i++) assert.equal((await get(f, `/article/${i}`, visitor('203.0.113.30', CHROME))).status, 200);
+  assert.equal((await get(f, '/article/5', visitor('203.0.113.30', CHROME))).status, 403);
+  assert.equal(lastReason(f), 'suspect:paging');
+  f.advance(61000); // A new minute does not lift it.
+  assert.equal((await get(f, '/article/6', visitor('203.0.113.30', CHROME))).status, 403);
+  assert.equal(lastReason(f), 'suspect:flagged');
+  f.advance(3600000);
+  assert.equal((await get(f, '/article/7', visitor('203.0.113.30', CHROME))).status, 200);
+  // A browser that fails the check cannot then slip through with clean-looking plain requests.
+  const failed = await check(f, { signals: { webdriver: true }, headers: visitor('203.0.113.31', CHROME) });
+  assert.equal(await errorOf(failed), 'automation_detected');
+  assert.equal((await get(f, '/article/1', visitor('203.0.113.31', CHROME))).status, 403);
+  assert.equal(lastReason(f), 'suspect:flagged');
+});
+
+test('open paths skip the check for feeds and similar files, and settings are validated', async t => {
+  const f = await suspicious(t, {}, { OPEN_PATHS: '/robots.txt,/feed.xml' });
+  assert.equal((await get(f, '/feed.xml', visitor('203.0.113.40', { 'user-agent': 'FeedReader/3.1' }))).status, 200);
+  assert.equal((await get(f, '/other.xml', visitor('203.0.113.40', { 'user-agent': 'FeedReader/3.1' }))).status, 403);
+  const { configFromEnv } = await import('../src/config.mjs');
+  assert.equal(configFromEnv({}).humanCheck, 'suspicious');
+  assert.throws(() => configFromEnv({ HUMAN_CHECK: 'sometimes' }), /HUMAN_CHECK/);
+  assert.throws(() => configFromEnv({ OPEN_PATHS: 'feed.xml' }), /OPEN_PATHS/);
 });

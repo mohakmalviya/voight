@@ -13,7 +13,7 @@ const origin = http.createServer((req, res) => {
   res.end(`<!doctype html><title>Article ${req.url}</title><h1>Protected article</h1>`);
 }).listen(0, '127.0.0.1');
 await once(origin, 'listening');
-const config = { ...configFromEnv({ MODE: 'public', CHALLENGE_DIFFICULTY: '12', SANDBOX_CHECK: 'enforce' }), upstream: `http://127.0.0.1:${origin.address().port}` };
+const config = { ...configFromEnv({ MODE: 'public', CHALLENGE_DIFFICULTY: '12', SANDBOX_CHECK: 'enforce', HUMAN_CHECK: 'always' }), upstream: `http://127.0.0.1:${origin.address().port}` };
 const store = new Store(':memory:');
 // Every address here is loopback, so a datacenter address is simulated by switching this on for one variant.
 const cloud = { datacenter: false, has() { return this.datacenter; } };

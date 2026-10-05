@@ -23,8 +23,10 @@ export function configFromEnv(env = process.env) {
   if (!['off', 'observe', 'enforce'].includes(automationPolicy)) throw new Error('Invalid AUTOMATION_POLICY');
   const aiAgents = env.AI_AGENTS ?? 'block';
   if (!['block', 'allow'].includes(aiAgents)) throw new Error('Invalid AI_AGENTS');
-  const humanCheck = env.HUMAN_CHECK ?? 'always';
-  if (!['always', 'off'].includes(humanCheck)) throw new Error('Invalid HUMAN_CHECK');
+  const humanCheck = env.HUMAN_CHECK ?? 'suspicious';
+  if (!['suspicious', 'always', 'off'].includes(humanCheck)) throw new Error('Invalid HUMAN_CHECK');
+  const openPaths = (env.OPEN_PATHS ?? '/robots.txt').split(',').map(path => path.trim()).filter(Boolean);
+  for (const path of openPaths) if (!/^\/[^?#\s]*$/.test(path)) throw new Error(`Invalid OPEN_PATHS entry ${path}`);
   const verifiedCrawlers = (env.VERIFIED_CRAWLERS ?? Object.keys(CRAWLERS).join(',')).split(',').map(name => name.trim().toLowerCase()).filter(name => name && name !== 'off');
   for (const name of verifiedCrawlers) if (!CRAWLERS[name]) throw new Error(`Unknown VERIFIED_CRAWLERS entry ${name}`);
   const sandboxCheck = env.SANDBOX_CHECK ?? 'log';
@@ -59,8 +61,9 @@ export function configFromEnv(env = process.env) {
     challengeDifficulty: integer(env, 'CHALLENGE_DIFFICULTY', 16, 1, 28),
     clearancesPerWindow: integer(env, 'CLEARANCES_PER_WINDOW', 5, 0, 100),
     clearanceSeconds: integer(env, 'CLEARANCE_SECONDS', 3600, 60, 86400),
-    // Human check (public mode): every new visitor confirms once, then browses for humanPassSeconds.
-    aiAgents, humanCheck, verifiedCrawlers,
+    // Human check (public mode): visitors who look automated (or everyone, with `always`) confirm once,
+    // then browse for humanPassSeconds. Open paths skip it, for robots.txt, feeds and the like.
+    aiAgents, humanCheck, verifiedCrawlers, openPaths,
     humanPassSeconds: integer(env, 'HUMAN_PASS_SECONDS', 86400, 300, 30 * 86400),
     humanPassesPerHour: integer(env, 'HUMAN_PASSES_PER_HOUR', 60, 1, 100000),
     humanPagesPerMinute: integer(env, 'HUMAN_PAGES_PER_MINUTE', 20, 1, 10000),
