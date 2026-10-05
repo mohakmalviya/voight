@@ -1,5 +1,7 @@
 # Extraction policy
 
+This document describes accounting for a *subject*. In private mode a subject is a credential. In public mode it is a network (IPv4 address or IPv6 /64), or a clearance earned by passing a proof-of-work check. The accounting is identical; public mode stores it in separate tables and has no revocation step. Public mode also turns repeated denials into strikes and timed blocks, as described in the [threat model](threat-model.md).
+
 These controls bound approved clients' access. They do not determine whether a person or an agent is driving the browser. All sessions of a credential share the same policy; a new login, user-agent string, or gateway restart cannot reset its durable extraction usage.
 
 ## Enforcement order

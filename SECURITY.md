@@ -1,9 +1,17 @@
-# Security
+# Security policy
 
-Human Gate is a pre-audit prototype. Do not use it as the sole protection for sensitive production data.
+Human Gate is a pre-audit prototype. Do not use it as the only protection for sensitive data.
 
-Report vulnerabilities privately to the repository owner through GitHub's private vulnerability reporting if enabled, or an existing private communication channel. Do not put exploit details, credentials, invitation codes, database files, or private logs in public issues.
+## Reporting a vulnerability
 
-Include the affected commit, deployment topology, reproduction against a local demo, expected behavior, and actual behavior. Never test against unrelated third-party sites without authorization.
+Report vulnerabilities privately through GitHub: **Security → Report a vulnerability** on this repository. Do not open a public issue, and do not post exploit details, credentials, invitation codes, database files or logs publicly.
 
-Known limitations and trust assumptions are maintained in `docs/threat-model.md`.
+Include the affected commit, your deployment topology (mode, proxies, `TRUSTED_PROXIES`), a reproduction against a local demo, and the expected and actual behaviour.
+
+Only test against your own deployments. Never test against third-party sites without their permission.
+
+## Scope
+
+In scope: bypassing budgets, blocks, clearances or private-mode admission; header or identity spoofing; anything that lets the origin be reached without passing the gateway's checks; leaks of addresses, URLs or secrets into storage or logs.
+
+Out of scope: limitations already documented in [docs/threat-model.md](docs/threat-model.md), such as slow in-budget agents, distributed IP pools and volumetric floods. New techniques that make those cheaper are still welcome as reports.

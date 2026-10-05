@@ -7,7 +7,7 @@ import { createGateway } from './gateway.mjs';
 
 export async function loadAssets() {
   const assets = {};
-  for (const [file, type] of [['index.html', 'text/html; charset=utf-8'], ['style.css', 'text/css; charset=utf-8'], ['client.js', 'text/javascript; charset=utf-8']]) {
+  for (const [file, type] of [['index.html', 'text/html; charset=utf-8'], ['style.css', 'text/css; charset=utf-8'], ['client.js', 'text/javascript; charset=utf-8'], ['challenge.js', 'text/javascript; charset=utf-8']]) {
     assets[`/_gate/${file}`] = { body: await readFile(new URL(`../dist/${file}`, import.meta.url)), type };
   }
   return assets;
@@ -20,7 +20,7 @@ export async function start(config = configFromEnv()) {
   const server = createGateway({ config, store, assets });
   server.once('close', () => store.close());
   await new Promise((resolve, reject) => { server.once('error', reject); server.listen(config.port, config.host, resolve); });
-  console.log(`Human Gate listening at ${config.origin}`);
+  console.log(`Human Gate (${config.mode} mode) listening at ${config.origin}`);
   return server;
 }
 
