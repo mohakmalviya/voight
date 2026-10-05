@@ -7,6 +7,7 @@ import { humanReport, headerAnomaly, unbrandedChromium } from '../src/automation
 import { declaredAIAgent } from '../src/agents.mjs';
 import { Store } from '../src/store.mjs';
 import { cloudRanges, sandboxReport } from '../src/sandbox.mjs';
+import { scrambledProbe, sealReport, openReport } from '../src/scramble.mjs';
 
 const ASSETS = { '/_gate/index.html': { body: '<h1>Admission required</h1>', type: 'text/html' } };
 // A hand slowing down onto the button: uneven steps, roughly one per frame.
@@ -39,14 +40,16 @@ function solve(challenge, difficulty) {
     if (leadingZeroBits(createHash('sha256').update(`${challenge}:${nonce}`).digest()) >= difficulty) return String(nonce);
   }
 }
-// Runs the check the way the page does: ask, hold for a moment, then report.
-async function check(f, { signals = {}, wait = 1600, headers = visitor(), verifyHeaders = headers, nonce } = {}) {
+// Runs the check the way the page does: ask, hold for a moment, then send the report sealed with this check's key.
+const probeKey = (f, cookie) => f.store.peekChallenge(cookie.split('=')[1]).probe.key;
+async function check(f, { signals = {}, wait = 1600, headers = visitor(), verifyHeaders = headers, nonce, report } = {}) {
   const issued = await f.post('/_gate/human/options', {}, null, headers);
   assert.equal(issued.status, 200);
   const { challenge, difficulty, holdMs } = await issued.json();
   assert.equal(holdMs, 1500);
   f.advance(wait);
-  return f.post('/_gate/human/verify', { nonce: nonce ?? solve(challenge, difficulty), signals: { ...HUMAN, ...signals } }, f.cookieOf(issued), verifyHeaders);
+  const cookie = f.cookieOf(issued);
+  return f.post('/_gate/human/verify', { nonce: nonce ?? solve(challenge, difficulty), report: report ?? sealReport({ ...HUMAN, ...signals }, probeKey(f, cookie)) }, cookie, verifyHeaders);
 }
 async function get(f, path, headers) {
   const response = await f.request(path, { headers });
@@ -65,11 +68,11 @@ test('a new visitor gets the human check, and nothing reaches the site before it
   assert.equal(f.hits(), 1);
 });
 
-test('holding the button with a real gesture earns a day-long pass bound to this browser', async t => {
+test('holding the button with a real gesture earns a six-hour pass bound to this browser', async t => {
   const f = await fixture(t);
   const passed = await check(f);
   assert.equal(passed.status, 200, await passed.clone().text());
-  assert.match(passed.headers.get('set-cookie'), /^hg_human=[\w-]{43}; Path=\/; HttpOnly; SameSite=Lax; Max-Age=86400/);
+  assert.match(passed.headers.get('set-cookie'), /^hg_human=[\w-]{43}; Path=\/; HttpOnly; SameSite=Lax; Max-Age=21600/);
   const cookie = f.cookieOf(passed);
   assert.equal((await get(f, '/article', visitor('203.0.113.10', { ...page, cookie }))).text, 'PRIVATE_ORIGIN_CONTENT');
   // A new network address (mobile carriers rotate them) keeps the pass; another client copying the cookie does not.
@@ -77,7 +80,7 @@ test('holding the button with a real gesture earns a day-long pass bound to this
   assert.equal((await get(f, '/next', visitor('203.0.113.10', { cookie, 'user-agent': 'scraper/1.0' }))).status, 403);
   const issued = f.audit.find(event => event.reason === 'human_pass_issued');
   assert.deepEqual(issued.automationSignals, ['pointer:mouse', 'moves:9', 'sandbox:0']);
-  f.advance(86401 * 1000);
+  f.advance(21601 * 1000);
   assert.equal((await get(f, '/later', visitor('203.0.113.10', { cookie }))).status, 403); // Passes expire.
 });
 
@@ -124,9 +127,85 @@ test('automation is caught even when it performs the hold, and a claimed hold mu
   assert.equal(humanReport({ ...HUMAN, devtools: 3 }, 'Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X) CriOS/141.0 Mobile/15E148 Safari/604.1').automated, false);
   for (const devtools of [null, '9', Infinity, NaN]) assert.equal(humanReport({ ...HUMAN, devtools }, chrome).automated, false);
   assert.equal(humanReport({ ...HUMAN, devtools: -5 }, chrome).automated, true); // Impossible from the real page.
+  assert.deepEqual(humanReport({ ...HUMAN, devtools: 1.04, worker: { devtools: 5.07 } }, chrome).notes, ['devtools_protocol', 'pointer:mouse', 'moves:9', 'devtools:1.04', 'worker:5.07']);
+  assert.equal(humanReport({ ...HUMAN, devtools: 1.3, worker: { devtools: 1.6 } }, chrome).automated, false);
+  assert.equal(humanReport({ ...HUMAN, devtools: 1.3, worker: false }, chrome).automated, true);
+  // A logged Error that nobody read: the console call never reached the browser.
+  assert.equal(humanReport({ ...HUMAN, devtools: 1.3, touched: true, worker: { devtools: 1.2, touched: true } }, chrome).automated, false);
+  assert.deepEqual(humanReport({ ...HUMAN, devtools: 1.0, touched: false, worker: { devtools: 1.2, touched: true } }, chrome).notes.slice(0, 1), ['console_tampered']);
+  assert.deepEqual(humanReport({ ...HUMAN, devtools: 1.0, touched: true, worker: { devtools: 1.0, touched: false } }, chrome).notes.slice(0, 1), ['console_tampered']);
+  assert.equal(humanReport({ ...HUMAN, touched: false }, 'Mozilla/5.0 (Windows NT 10.0; rv:143.0) Gecko/20100101 Firefox/143.0').automated, false);
+  assert.equal(humanReport({ ...HUMAN, devtools: null, worker: null }, chrome).automated, false); // Neither measured (no userAgentData).
   // A slow, careful hand creeping one pixel at a time is not mistaken for a script.
   assert.equal(humanReport({ ...HUMAN, path: Array.from({ length: 30 }, () => [1, 0, 17]) }).automated, false);
   assert.deepEqual((await f.post('/_gate/human/verify', { signals: HUMAN }, null, visitor())).status, 403); // No issued check.
+});
+
+test('each check gets its own scrambled script, and only that script can seal a report the server accepts', async t => {
+  const f = await fixture(t);
+  const issued = await f.post('/_gate/human/options', {}, null, visitor());
+  const cookie = f.cookieOf(issued);
+  const script = await f.request('/_gate/human/probe.js', { headers: { ...visitor(), cookie } });
+  assert.equal(script.status, 200); assert.match(script.headers.get('content-type'), /javascript/); assert.equal(script.headers.get('cache-control'), 'no-store');
+  const source = await script.text();
+  // Nothing to find by name: no API names, no report fields, and the key only in encoded form.
+  for (const word of ['console', 'debug', 'webdriver', 'devtools', 'performance', 'navigator', 'native code', 'hooked', probeKey(f, cookie)]) assert.ok(!source.includes(word), word);
+  const worker = await f.request('/_gate/human/probe-worker.js', { headers: { ...visitor(), cookie } });
+  assert.equal(worker.status, 200); assert.match(worker.headers.get('content-type'), /javascript/);
+  const workerSource = await worker.text();
+  for (const word of ['console', 'debug', 'devtools', 'performance', f.store.peekChallenge(cookie.split('=')[1]).probe.workerKey]) assert.ok(!workerSource.includes(word), word);
+  assert.equal((await f.request('/_gate/human/probe-worker.js', { headers: visitor() })).status, 404);
+  const other = scrambledProbe();
+  assert.notEqual(other.source, scrambledProbe().source); assert.notEqual(other.key, scrambledProbe().key);
+  // Without this check's cookie, or from another client, there is no script.
+  assert.equal((await f.request('/_gate/human/probe.js', { headers: visitor() })).status, 404);
+  assert.equal((await f.request('/_gate/human/probe.js', { headers: { ...visitor(), cookie, 'user-agent': 'other' } })).status, 404);
+  // A report rewritten in transit, sealed with another check's key, or sent in the old plain form is refused as tampering.
+  const genuine = sealReport({ ...HUMAN, devtools: 5.1 }, '00'.repeat(32));
+  for (const [index, report] of [genuine, genuine.replace(/^./, c => (c === 'A' ? 'B' : 'A')), undefined, 'x.y', 42].entries()) {
+    const response = await check(f, { headers: visitor(`203.0.113.${60 + index}`), report: report ?? '' });
+    assert.equal(response.status, 403); assert.equal(await errorOf(response), 'automation_detected');
+    assert.ok(f.audit.at(-1).automationSignals.includes('report_tampered'));
+  }
+  assert.deepEqual(openReport(sealReport({ a: 1 }, 'ab'.repeat(32)), 'ab'.repeat(32)), { a: 1 });
+  for (const [text, key] of [[sealReport([1], 'ab'.repeat(32)), 'ab'.repeat(32)], ['', 'ab'.repeat(32)], ['a.b.c', 'ab'.repeat(32)], ['x.y', 'short'], [null, null]]) assert.equal(openReport(text, key), null);
+  // Functions replaced to hide automation are reported by the script itself.
+  const hooked = await check(f, { headers: visitor('203.0.113.70'), signals: { hooked: true } });
+  assert.equal(await errorOf(hooked), 'automation_detected');
+  assert.ok(f.audit.at(-1).automationSignals.includes('console_tampered'));
+});
+
+test('the worker repeats the timing where page hooks cannot reach, and must answer', async t => {
+  const f = await fixture(t);
+  const chrome = { 'user-agent': 'Mozilla/5.0 (Windows NT 10.0) Chrome/141.0 Safari/537.36' };
+  const run = async (address, devtools, worker) => {
+    const headers = visitor(address, chrome);
+    const issued = await f.post('/_gate/human/options', {}, null, headers);
+    const { challenge, difficulty } = await issued.json();
+    f.advance(1600);
+    const cookie = f.cookieOf(issued), probe = f.store.peekChallenge(cookie.split('=')[1]).probe;
+    const sealed = worker === undefined ? undefined : typeof worker === 'string' ? worker : sealReport({ devtools: worker }, probe.workerKey);
+    const response = await f.post('/_gate/human/verify', { nonce: solve(challenge, difficulty), report: sealReport({ ...HUMAN, devtools, worker: sealed }, probe.key) }, cookie, headers);
+    return [response.status, f.audit.at(-1).automationSignals ?? []];
+  };
+  assert.equal((await run('203.0.113.80', 1.3, 1.2))[0], 200);
+  // A page hook flattened the page's timing, but the worker still sees the attached client.
+  const [hidden, hiddenSignals] = await run('203.0.113.81', 1.04, 4.58);
+  assert.equal(hidden, 403); assert.ok(hiddenSignals.includes('devtools_protocol'));
+  // The page measured but the worker never answered, or its report was forged.
+  for (const [index, worker] of [undefined, 'x.y', sealReport({ devtools: 1.2 }, '00'.repeat(32))].entries()) {
+    const [status, signals] = await run(`203.0.113.${82 + index}`, 1.3, worker);
+    assert.equal(status, 403); assert.ok(signals.includes('console_tampered'), String(worker));
+  }
+});
+
+test('a pass covers a reading session, not a whole site', async t => {
+  const f = await fixture(t, { humanPagesPerPass: 3, humanPagesPerMinute: 100 });
+  const passed = await check(f);
+  const cookie = f.cookieOf(passed);
+  for (let i = 1; i <= 3; i++) assert.equal((await get(f, `/article/${i}`, visitor('203.0.113.10', { ...page, cookie }))).status, 200);
+  assert.equal((await get(f, '/article/4', visitor('203.0.113.10', { ...page, cookie }))).status, 403);
+  assert.equal(f.audit.at(-1).reason, 'human_recheck');
 });
 
 test('declared AI agents and signed agents are refused, even before passkey admission', async t => {
@@ -240,20 +319,20 @@ test('sandbox signals score servers high and real personal devices at zero', () 
 test('sandbox scores are only recorded in log mode, and refuse or shorten passes in enforce mode', async t => {
   const cloud = cloudRanges(['198.51.100.0/24']);
   const server = { 'x-forwarded-for': '198.51.100.9', 'user-agent': LINUX };
-  const logged = await fixture(t, { cloud });
+  const logged = await fixture(t, { cloud }, { SANDBOX_CHECK: 'log' });
   const allowed = await check(logged, { signals: { env: SERVER }, headers: server });
   assert.equal(allowed.status, 200);
   assert.deepEqual(logged.audit.find(event => event.reason === 'human_pass_issued').automationSignals.slice(-6),
     ['datacenter', 'software_gpu', 'no_media_devices', 'bare_screen', 'utc_clock', 'sandbox:7']);
 
-  const f = await fixture(t, { cloud }, { SANDBOX_CHECK: 'enforce' });
+  const f = await fixture(t, { cloud }); // enforce is the default
   const refused = await check(f, { signals: { env: SERVER }, headers: server });
   assert.equal(refused.status, 403); assert.equal(await errorOf(refused), 'sandbox_detected');
   // A real laptop behind a datacenter VPN: allowed, but the pass lasts an hour.
   const vpn = await check(f, { signals: { env: LAPTOP }, headers: { 'x-forwarded-for': '198.51.100.10', 'user-agent': WINDOWS } });
   assert.equal(vpn.status, 200); assert.match(vpn.headers.get('set-cookie'), /Max-Age=3600/);
   const home = await check(f, { signals: { env: LAPTOP }, headers: { 'x-forwarded-for': '203.0.113.10', 'user-agent': WINDOWS } });
-  assert.equal(home.status, 200); assert.match(home.headers.get('set-cookie'), /Max-Age=86400/);
+  assert.equal(home.status, 200); assert.match(home.headers.get('set-cookie'), /Max-Age=21600/);
 
   const off = await fixture(t, { cloud }, { SANDBOX_CHECK: 'off' });
   assert.equal((await check(off, { signals: { env: SERVER }, headers: server })).status, 200);

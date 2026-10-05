@@ -9,6 +9,7 @@ import { denialPage, challengePage, humanPage } from './denial.mjs';
 import { declaredAIAgent, crawlerVerifier } from './agents.mjs';
 import { clientAddress, networkPrefix } from './network.mjs';
 import { sandboxReport, SANDBOX_BLOCK_SCORE, SANDBOX_STRICT_SCORE } from './sandbox.mjs';
+import { scrambledProbe, openReport } from './scramble.mjs';
 
 const PREFIX = '/_gate/';
 // Public-mode denials that count as a strike when a client keeps sending requests anyway.
@@ -150,6 +151,19 @@ export function createGateway({ config, store, assets, auth = webauthn(config), 
         if (gateAsset) {
           outcome = 'gate_asset'; return send(res, 200, assets[url.pathname].body, assets[url.pathname].type);
         }
+        // The measuring half of the human check, generated for this check only (see scramble.mjs).
+        if (req.method === 'GET' && isPublic && config.humanCheck !== 'off' && url.pathname === `${PREFIX}human/probe.js`) {
+          const pending = store.peekChallenge(cookie(req, ceremonyCookie));
+          if (!pending || pending.kind !== 'human' || pending.ua !== digest(ua) || !pending.probe) throw new Denied(404, 'not_found');
+          res.setHeader('cache-control', 'no-store');
+          outcome = 'human_probe'; return send(res, 200, pending.probe.source, 'text/javascript; charset=utf-8');
+        }
+        if (req.method === 'GET' && isPublic && config.humanCheck !== 'off' && url.pathname === `${PREFIX}human/probe-worker.js`) {
+          const pending = store.peekChallenge(cookie(req, ceremonyCookie));
+          if (!pending || pending.kind !== 'human' || pending.ua !== digest(ua) || !pending.probe?.workerSource) throw new Denied(404, 'not_found');
+          res.setHeader('cache-control', 'no-store');
+          outcome = 'human_probe'; return send(res, 200, pending.probe.workerSource, 'text/javascript; charset=utf-8');
+        }
         if (req.method !== 'POST') throw new Denied(404, 'not_found');
         if (req.headers.origin !== config.origin) throw new Denied(403, 'origin_mismatch');
         if (!store.limit(`auth:${network ?? digest(ip)}`, 20)) throw new Denied(429, 'auth_rate');
@@ -180,15 +194,21 @@ export function createGateway({ config, store, assets, auth = webauthn(config), 
             // A small proof of work rides along, so forging passes without a browser still costs something.
             const challenge = token(), difficulty = config.challengeDifficulty;
             store.takeChallenge(cookie(req, ceremonyCookie));
-            setCookie(res, ceremonyCookie, store.challenge({ kind: 'human', challenge, difficulty, ua: digest(ua), issued: store.now() }), 120);
+            const probe = scrambledProbe();
+            setCookie(res, ceremonyCookie, store.challenge({ kind: 'human', challenge, difficulty, ua: digest(ua), issued: store.now(), probe }), 120);
             outcome = 'human_check_issued'; return send(res, 200, { challenge, difficulty, holdMs: HUMAN_HOLD_MS });
           }
           if (config.humanCheck !== 'off' && url.pathname === `${PREFIX}human/verify`) {
             const pending = store.takeChallenge(cookie(req, ceremonyCookie));
             if (!pending || pending.kind !== 'human' || pending.ua !== digest(ua)) throw new Denied(403, 'invalid_challenge');
-            const report = humanReport(body.signals, ua);
+            // Only this check's script can seal a report that opens with its key. Anything else was altered or forged.
+            const reported = openReport(body.report, pending.probe?.key);
+            if (!reported) { signals.push('report_tampered'); throw new Denied(403, 'automation_detected'); }
+            // The worker's timing, sealed with its own key: null when absent, false when it does not open.
+            const worker = reported.worker == null ? null : (openReport(reported.worker, pending.probe.workerKey) ?? false);
+            const report = humanReport({ ...reported, worker }, ua);
             signals.push(...report.notes);
-            const sandbox = config.sandboxCheck === 'off' ? null : sandboxReport(body.signals?.env, ua, { datacenter: cloud?.has(ip) ?? false, brands: body.signals?.brands });
+            const sandbox = config.sandboxCheck === 'off' ? null : sandboxReport(reported.env, ua, { datacenter: cloud?.has(ip) ?? false, brands: reported.brands });
             if (sandbox) signals.push(...sandbox.notes);
             if (report.automated) throw new Denied(403, 'automation_detected');
             // The server clock checks the hold too, so a script cannot just claim one.
@@ -270,6 +290,10 @@ export function createGateway({ config, store, assets, auth = webauthn(config), 
           // Page after page faster than anyone reads: an agent may have taken over. Ask again.
           store.revokePass(human.hash); throw new Denied(403, 'human_recheck');
         }
+        else if (human && isDocument(req) && !store.limit(`humantotal:${human.hash}`, config.humanPagesPerPass, config.humanPassSeconds * 1000)) {
+          // One pass covers a reading session, not a whole site: a pass handed to a scraper runs out.
+          store.revokePass(human.hash); throw new Denied(403, 'human_recheck');
+        }
       }
       let subject, scope, identity;
       if (isPublic) {
@@ -310,7 +334,7 @@ export function createGateway({ config, store, assets, auth = webauthn(config), 
       const upstream = await fetch(target, {
         method: req.method, redirect: 'manual', signal: proxySignal,
         headers: {
-          accept: req.headers.accept ?? '*/*', 'user-agent': 'HumanGate/0.8', ...identity,
+          accept: req.headers.accept ?? '*/*', 'user-agent': 'HumanGate/0.9', ...identity,
           ...(req.headers['accept-language'] ? { 'accept-language': req.headers['accept-language'] } : {}),
           ...(range ? { range, ...(req.headers['if-range'] ? { 'if-range': req.headers['if-range'] } : {}) } : {}),
         },

@@ -63,7 +63,14 @@ export function humanReport(report, userAgent = '') {
   if (pointer === 'mouse' && syntheticPath(path)) found.push('synthetic_pointer');
   const devtools = Number.isFinite(value.devtools) ? Math.max(0, Math.min(value.devtools, 1000)) : null;
   if (devtools !== null && chromiumUA(userAgent) && devtools >= DEVTOOLS_RATIO) found.push('devtools_protocol');
-  if (devtools !== null && chromiumUA(userAgent) && devtools < CONSOLE_TAMPERED_RATIO) found.push('console_tampered');
+  // The same timing from a worker, which page-level console hooks do not reach. Where the page measured, a missing or
+  // unreadable worker report means something stood in the way.
+  const worker = value.worker && Number.isFinite(value.worker.devtools) ? Math.max(0, Math.min(value.worker.devtools, 1000)) : null;
+  const chromium = chromiumUA(userAgent);
+  if (worker !== null && chromium && worker >= DEVTOOLS_RATIO && !found.includes('devtools_protocol')) found.push('devtools_protocol');
+  if ((chromium && devtools !== null && devtools < CONSOLE_TAMPERED_RATIO) || (chromium && worker !== null && worker < CONSOLE_TAMPERED_RATIO)
+    || (chromium && devtools !== null && 'worker' in value && worker === null) || value.hooked === true
+    || (chromium && (value.touched === false || (value.worker && value.worker.touched === false)))) found.push('console_tampered');
   const gap = value.pressGap, final = path.at(-1);
   return {
     automated: found.length > 0,
@@ -74,7 +81,7 @@ export function humanReport(report, userAgent = '') {
     // Touch and keys never hover.
     jumped: pointer === 'mouse' && (path.length < 2 || Math.hypot(final[0], final[1]) > 80
       || !(Number.isFinite(gap) && gap >= 0 && gap <= 3)),
-    notes: [...found, `pointer:${pointer}`, `moves:${path.length ? path.length + 1 : 0}`, ...(devtools === null ? [] : [`devtools:${devtools.toFixed(2)}`])],
+    notes: [...found, `pointer:${pointer}`, `moves:${path.length ? path.length + 1 : 0}`, ...(devtools === null ? [] : [`devtools:${devtools.toFixed(2)}`]), ...(worker === null ? [] : [`worker:${worker.toFixed(2)}`])],
   };
 }
 

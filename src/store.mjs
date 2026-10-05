@@ -58,6 +58,10 @@ export class Store {
     this.db.prepare('INSERT INTO challenges VALUES(?,?,?)').run(digest(value), JSON.stringify(payload), this.now() + 120000);
     return value;
   }
+  peekChallenge(value) {
+    const row = this.db.prepare('SELECT payload FROM challenges WHERE hash=? AND expires>?').get(digest(value ?? ''), this.now());
+    return row ? JSON.parse(row.payload) : null;
+  }
   takeChallenge(value) {
     const row = this.db.prepare('DELETE FROM challenges WHERE hash=? RETURNING *').get(digest(value));
     return row && row.expires > this.now() ? JSON.parse(row.payload) : null;

@@ -29,7 +29,7 @@ export function configFromEnv(env = process.env) {
   for (const path of openPaths) if (!/^\/[^?#\s]*$/.test(path)) throw new Error(`Invalid OPEN_PATHS entry ${path}`);
   const verifiedCrawlers = (env.VERIFIED_CRAWLERS ?? Object.keys(CRAWLERS).join(',')).split(',').map(name => name.trim().toLowerCase()).filter(name => name && name !== 'off');
   for (const name of verifiedCrawlers) if (!CRAWLERS[name]) throw new Error(`Unknown VERIFIED_CRAWLERS entry ${name}`);
-  const sandboxCheck = env.SANDBOX_CHECK ?? 'log';
+  const sandboxCheck = env.SANDBOX_CHECK ?? 'enforce';
   if (!['off', 'log', 'enforce'].includes(sandboxCheck)) throw new Error('Invalid SANDBOX_CHECK');
   const dataDir = resolve(env.DATA_DIR ?? './data');
   const origin = new URL(env.PUBLIC_ORIGIN ?? 'http://localhost:8787');
@@ -64,10 +64,12 @@ export function configFromEnv(env = process.env) {
     // Human check (public mode): visitors who look automated (or everyone, with `always`) confirm once,
     // then browse for humanPassSeconds. Open paths skip it, for robots.txt, feeds and the like.
     aiAgents, humanCheck, verifiedCrawlers, openPaths,
-    humanPassSeconds: integer(env, 'HUMAN_PASS_SECONDS', 86400, 300, 30 * 86400),
+    humanPassSeconds: integer(env, 'HUMAN_PASS_SECONDS', 21600, 300, 30 * 86400),
+    humanPagesPerPass: integer(env, 'HUMAN_PAGES_PER_PASS', 300, 1, 1000000),
     humanPassesPerHour: integer(env, 'HUMAN_PASSES_PER_HOUR', 60, 1, 100000),
     humanPagesPerMinute: integer(env, 'HUMAN_PAGES_PER_MINUTE', 20, 1, 10000),
-    // Sandbox signals (datacenter address, software GPU, missing devices) scored at the human check. `log` only records them.
+    // Sandbox signals (datacenter address, software GPU, missing devices) scored at the human check. `log` only records them;
+    // `enforce` refuses a score of 4 or more and shortens passes at 2 or 3.
     sandboxCheck, cloudRangesFile: resolve(env.CLOUD_RANGES_FILE ?? resolve(dataDir, 'cloud-ranges.txt')),
   };
 }

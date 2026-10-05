@@ -25,11 +25,11 @@ Pre-response budget denials return HTTP 429, a stable JSON reason, and `Retry-Af
 | `credential_revoked` | Approval was removed during a transfer | Contact the operator |
 | `ai_agent` | The client declared itself an AI agent (user agent, `Signature-Agent`, or an AI app's browser) | None; set `AI_AGENTS=allow` to admit them |
 | `human_check_required` | Public mode, no valid pass, and either `HUMAN_CHECK=always` or a reason in `suspicious` mode (logged as `suspect:<reason>`: `datacenter`, `automation_user_agent`, `not_a_browser`, `missing_fetch_metadata`, `missing_client_hints`, `missing_language`, `unbranded_chromium`, `paging`, `flagged`) | Pass the check in a browser |
-| `human_recheck` | One pass opened more than `HUMAN_PAGES_PER_MINUTE` pages in a minute; the pass is revoked | Pass the check again |
-| `automation_detected` | The check found automation evidence, including a DevTools-protocol client such as Playwright or Puppeteer (`devtools_protocol`) | None for automated clients; a person with DevTools open closes it and reloads |
+| `human_recheck` | One pass opened more than `HUMAN_PAGES_PER_MINUTE` pages in a minute, or more than `HUMAN_PAGES_PER_PASS` in all; the pass is revoked | Pass the check again |
+| `automation_detected` | The check found automation evidence, including a DevTools-protocol client such as Playwright or Puppeteer (`devtools_protocol`), a console replaced or wrapped to hide one (`console_tampered`), or a report that does not open with this check's key (`report_tampered`) | None for automated clients; a person with DevTools open closes it and reloads |
 | `human_check_failed` | Gesture untrusted, too short, or the pointer never moved | Reload and hold the button |
 | `human_check_limit` | The network earned `HUMAN_PASSES_PER_HOUR` passes this hour | Wait up to an hour |
-| `sandbox_detected` | `SANDBOX_CHECK=enforce` and the browser scored 4+ for server traits (datacenter address, software GPU, missing devices) | Browse from a personal device; operators can use `log` mode |
+| `sandbox_detected` | The browser scored 4+ for server traits (datacenter address, software GPU, missing devices); `SANDBOX_CHECK=enforce` is the default | Browse from a personal device; operators can use `log` mode |
 
 `Retry-After` for extraction limits identifies the next accounting expiry, not a guarantee that the entire requested response will fit then. Gate assets and passkey endpoints have separate connection/authentication limits and do not consume protected content budgets.
 
