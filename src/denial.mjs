@@ -45,10 +45,10 @@ export function challengePage(retryAfter, requestID) {
 }
 
 // A plainly labelled human check. Mainstream AI agents are built to stop at these and hand control to the person.
-export function humanPage(recheck, requestID) {
+export function humanPage(recheck, requestID, passSeconds) {
   return page(recheck ? 'Still you?' : 'Confirm you are human.', 'HUMAN CHECK',
-    recheck ? 'Pages were opened faster than people usually read. Confirm once more to keep browsing.'
-      : 'This website is for people. AI agents and automated browsers are not allowed. Confirm once to continue; it lasts a day on this browser.',
+    recheck ? 'This browser has opened a lot of pages, or opened them faster than people usually read. Confirm once more to keep browsing.'
+      : `This website is for people. AI agents and automated browsers are not allowed. Confirm once to keep browsing for up to ${duration(passSeconds)} on this browser.`,
     `<div class="tiny">HUMAN VERIFICATION</div><h2 id="human-heading">Press and hold.</h2><p>Hold the button until it fills. You can also focus it and hold Space or Enter.</p><button id="hold" type="button" disabled aria-describedby="status"><span>Press and hold</span><span class="hold-fill" aria-hidden="true"></span></button><p id="status" role="status" aria-live="polite">Loading the check…</p><noscript><p>This check needs JavaScript. Turn it on and reload this page.</p></noscript><p class="reference">Reference: ${escape(requestID)}</p>`,
     '<script type="module" src="/_gate/human.js"></script>');
 }

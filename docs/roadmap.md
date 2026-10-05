@@ -38,13 +38,17 @@ The human check now scores sandbox signals: a datacenter address from published 
 
 The check times console serialisation to find a DevTools-protocol client attached to Chromium, which stops stock Playwright and Puppeteer however they hide flags, fake the mouse path or attach to a browser the person opened. Playwright's bundled, unbranded Chromium on Windows and Mac is asked in `suspicious` mode and weighs 3 in the sandbox score. Forks that avoid the `Runtime` domain (patchright) driving an installed browser still get through.
 
+## 0.9 — Scrambled check, worker timing, tighter defaults (implemented)
+
+The measuring code is generated for each check with random names, numbers and an encrypted report (`report_tampered` when it does not open), and the DevTools timing runs again in a Web Worker that page hooks do not reach. A logged `Error` that the console never read counts as tampering. In field tests this stopped every console hook we tried, a rewritten report and a blocked worker; a Proxy written for this check, injected into page and worker, and patchright driving installed Edge still got through. `SANDBOX_CHECK=enforce` is the default, passes last six hours, and one pass covers `HUMAN_PAGES_PER_PASS` (300) pages.
+
 ## Next — public mode in the real world
 
 - Pilot on a real site in observe-first fashion. Measure how often legitimate visitors hit checks or blocks, especially on mobile carrier NAT, before changing defaults.
 - Measure how often real people fail the human check (trackpads, touch, assistive technology) before tightening any rule.
 - Allow known link-preview fetchers a small budget of page heads, so shared links get previews without opening the site to scrapers using their names.
-- Collect `devtools:<ratio>` from Android, Mac and Linux Chrome before relying on the threshold there.
-- Collect `sandbox:<score>` distributions from real traffic before recommending `SANDBOX_CHECK=enforce`; add render hashes for other software renderers (llvmpipe, Mesa) measured on real servers.
+- Collect `devtools:<ratio>` and `worker:<ratio>` from Android, Mac and Linux Chrome before relying on the threshold there.
+- Collect `sandbox:<score>` distributions from real traffic to confirm the `SANDBOX_CHECK=enforce` default; add render hashes for other software renderers (llvmpipe, Mesa) measured on real servers.
 - Behaviour signals after the check (scrolling, reading time) to catch an agent taking over a passed browser, without injecting scripts into origin pages.
 - Verify Web Bot Auth signatures so an operator can allow specific named agents instead of all or none.
 - Proxy form submissions (POST) with their own per-network budget. Form spam was the original motivation, and the gateway is read-only today.
