@@ -1,6 +1,6 @@
 # Human Gate
 
-A self-hosted gateway for websites that want to restrict automated extraction. Protected content stays behind the gateway until an operator-approved visitor completes passkey verification. Version 0.2 adds rolling extraction limits shared by all sessions of a credential.
+A self-hosted gateway for websites that want to restrict automated extraction. Protected content stays behind the gateway until an operator-approved visitor completes passkey verification. Version 0.3 adds optional automation declaration checks, real Chromium UI/passkey evaluation, and a shareable evidence demo.
 
 **Status: early prototype, not production audited.** The repository is private during development. Source is MIT licensed for a future public release; visibility changes require the owner's decision.
 
@@ -16,12 +16,26 @@ A self-hosted gateway for websites that want to restrict automated extraction. P
 - Fixed upstream, no redirects followed, no forwarding of browser cookies or Authorization, no shared caching, response-size and upstream-time limits.
 - SQLite persistence, local administration, structured decision logs that omit URLs, IP addresses, invitation codes, cookies, and passkey payloads.
 - Tests exercise actual WebAuthn verification using a software authenticator fixture, plus common admission bypasses.
+- Optional `off` / `observe` / `enforce` automation policy. Observe is the default; neither a passkey nor a negative automation signal proves human control.
+- Browser tests exercise the actual enrollment/login UI, including an explicit suppressed-signal automation case that still gets through.
+- Human-readable access notices and a standalone, offline demo built from recorded evidence.
 
 ## What this does not promise
 
 Passkey verification does **not** prove that a browser is free of agents. An approved user can automate a session, share an invitation, or use a software authenticator. Our test fixture deliberately demonstrates the latter. A browser that has received content can save it or capture screenshots.
 
 This version excludes unapproved clients and constrains approved sessions. It does not yet provide behavioral bot classification, device attestation, cross-site reputation, large-scale DDoS protection, or complete agent isolation. The [controlled benchmark](docs/benchmark.md) deliberately shows approved automation succeeding within the limits. See [the threat model](docs/threat-model.md) and [roadmap](docs/roadmap.md).
+
+## Show the project to evaluators
+
+```sh
+npm ci
+npm run showcase
+```
+
+Open `dist/human-gate-demo.html` or send that single file to someone. It contains the measured browser and HTTP results, interactive case selection, and links to primary research. It makes no network requests until a reader follows an external link. It is a recorded evidence demo, not a hosted protection service; the repository stays private. See [the share kit](docs/share-kit.md) for a short pitch, walkthrough and feedback template.
+
+Read [research and priorities](docs/research.md), [automation policy](docs/automation-policy.md), and [browser evaluation](docs/browser-benchmark.md) for the design evidence and remaining gaps.
 
 ## Run the local demo
 
@@ -61,6 +75,7 @@ Copy `.env.example` to `.env` and set `PUBLIC_ORIGIN` and `UPSTREAM`. Run `npm s
 | `RESOURCES_PER_WINDOW` | `60` | Maximum distinct path-and-query combinations per credential in that window |
 | `MAX_CONCURRENT_REQUESTS` | `4` | Maximum in-flight origin transfers per credential across all its sessions |
 | `MAX_RESPONSE_BYTES` | `5242880` | Maximum decoded body size of any single response |
+| `AUTOMATION_POLICY` | `observe` | `off`, `observe`, or `enforce` for declared user-agent and WebDriver signals |
 
 The gateway currently supports **read-only origins**. Mutations, WebSockets, upstream login cookies, redirect rewriting, and cross-origin assets are not supported. The strict CSP is suited to self-contained sites; a general-purpose drop-in proxy is not claimed.
 
@@ -88,9 +103,11 @@ npm run build
 npm audit
 ```
 
+To exercise the real browser interface: `npm run browser:install`, then `npm run benchmark:browser`. Browser downloads stay in the checkout's `.cache/playwright` by default; `PLAYWRIGHT_BROWSERS_PATH` can override that location. Browser tests use Chromium's virtual authenticator and do not certify hardware passkeys or human compatibility.
+
 Tests use in-memory/temporary SQLite stores and loopback servers. They never contact external websites or create real user passkeys. The synthetic authenticator is isolated to `test/` and used by tests and the benchmark only, never by the application. A real-device enrollment check is a separate manual acceptance test.
 
-Layout: `src/` gateway, storage and WebAuthn; `web/` visitor interface; `scripts/` build and demo; `test/` security regressions; `docs/` design and deployment.
+Layout: `src/` gateway, storage and WebAuthn; `web/` visitor interface; `showcase/` standalone evidence demo; `scripts/` build, demo and browser evaluation; `test/` security regressions; `docs/` research, design and deployment.
 
 ## Technical references
 

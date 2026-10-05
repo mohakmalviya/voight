@@ -1,5 +1,5 @@
 {
-  "generatedAt": "2026-09-22T21:10:20.771Z",
+  "generatedAt": "2026-10-05T04:41:35.952Z",
   "node": "24.19.0",
   "scope": "Single-process loopback scripts with real WebAuthn verification and a software authenticator; controlled limits, not a human/bot classifier.",
   "notMeasured": [
@@ -16,8 +16,8 @@
       "blocked": 12,
       "upstreamRequests": 0,
       "protectedBytes": 0,
-      "p50Ms": 6.15,
-      "p95Ms": 24.8,
+      "p50Ms": 15.3,
+      "p95Ms": 19.71,
       "decisions": {
         "admission_required": 12
       },
@@ -35,8 +35,8 @@
       "blocked": 0,
       "upstreamRequests": 6,
       "protectedBytes": 6144,
-      "p50Ms": 11.47,
-      "p95Ms": 20.5,
+      "p50Ms": 30.74,
+      "p95Ms": 31.57,
       "decisions": {
         "admitted": 6
       },
@@ -54,8 +54,8 @@
       "blocked": 15,
       "upstreamRequests": 5,
       "protectedBytes": 5120,
-      "p50Ms": 7.34,
-      "p95Ms": 14.18,
+      "p50Ms": 15.49,
+      "p95Ms": 31.47,
       "decisions": {
         "admitted": 5,
         "resource_budget": 15
@@ -74,8 +74,8 @@
       "blocked": 5,
       "upstreamRequests": 3,
       "protectedBytes": 3072,
-      "p50Ms": 5.72,
-      "p95Ms": 24.95,
+      "p50Ms": 14.68,
+      "p95Ms": 29.44,
       "decisions": {
         "admitted": 3,
         "resource_budget": 5
@@ -94,8 +94,8 @@
       "blocked": 8,
       "upstreamRequests": 4,
       "protectedBytes": 8192,
-      "p50Ms": 7.72,
-      "p95Ms": 28.15,
+      "p50Ms": 15.52,
+      "p95Ms": 31.04,
       "decisions": {
         "admitted": 4,
         "byte_budget": 8
@@ -114,8 +114,8 @@
       "blocked": 6,
       "upstreamRequests": 2,
       "protectedBytes": 2048,
-      "p50Ms": 9.52,
-      "p95Ms": 19.57,
+      "p50Ms": 5.04,
+      "p95Ms": 12.53,
       "decisions": {
         "parallel_limit": 6,
         "admitted": 2

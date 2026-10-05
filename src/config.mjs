@@ -7,6 +7,8 @@ function integer(env, name, fallback, min, max) {
 }
 
 export function configFromEnv(env = process.env) {
+  const automationPolicy = env.AUTOMATION_POLICY ?? 'observe';
+  if (!['off', 'observe', 'enforce'].includes(automationPolicy)) throw new Error('Invalid AUTOMATION_POLICY');
   const origin = new URL(env.PUBLIC_ORIGIN ?? 'http://localhost:8787');
   if (origin.username || origin.password || origin.search || origin.hash || origin.pathname !== '/') throw new Error('PUBLIC_ORIGIN must be an origin');
   if (origin.protocol !== 'https:' && !(origin.protocol === 'http:' && origin.hostname === 'localhost')) throw new Error('Use HTTPS outside localhost');
@@ -14,6 +16,7 @@ export function configFromEnv(env = process.env) {
   if (!['http:', 'https:'].includes(upstream.protocol) || upstream.username || upstream.password || upstream.search || upstream.hash || upstream.pathname !== '/') throw new Error('UPSTREAM must be an HTTP(S) origin');
   if (origin.origin === upstream.origin) throw new Error('UPSTREAM cannot point to this gateway');
   return {
+    automationPolicy,
     origin: origin.origin, rpID: origin.hostname, upstream: upstream.origin,
     host: env.HOST ?? '127.0.0.1', port: integer(env, 'PORT', 8787, 1, 65535),
     dataDir: resolve(env.DATA_DIR ?? './data'), secure: origin.protocol === 'https:',

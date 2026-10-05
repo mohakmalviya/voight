@@ -4,6 +4,8 @@ import { finished } from 'node:stream/promises';
 import { randomUUID } from 'node:crypto';
 import { token, digest } from './store.mjs';
 import { webauthn } from './webauthn.mjs';
+import { automationSignals, reportedWebdriver, automationDecision } from './automation.mjs';
+import { denialPage } from './denial.mjs';
 
 const PREFIX = '/_gate/';
 class Denied extends Error {
@@ -42,6 +44,7 @@ export function createGateway({ config, store, assets, auth = webauthn(config), 
     const requestID = randomUUID();
     let outcome = 'internal_error';
     let releaseSlot, controller, proxySignal, abortOnClose, chargedBytes = 0;
+    let signals = [];
     res.setHeader('x-request-id', requestID);
     res.setHeader('cache-control', 'no-store, private');
     res.setHeader('x-content-type-options', 'nosniff');
@@ -56,6 +59,7 @@ export function createGateway({ config, store, assets, auth = webauthn(config), 
       const url = new URL(req.url, config.origin);
       const ip = req.socket.remoteAddress ?? 'unknown';
       const ua = req.headers['user-agent'] ?? '';
+      if (config.automationPolicy !== 'off') signals = automationSignals(ua);
       if (!store.limit(`all:${digest(ip)}`, 180)) throw new Denied(429, 'connection_rate');
       if (req.headers['sec-fetch-site'] === 'cross-site') throw new Denied(403, 'cross_site');
       if (url.pathname.startsWith(PREFIX)) {
@@ -71,6 +75,10 @@ export function createGateway({ config, store, assets, auth = webauthn(config), 
           outcome = 'logged_out'; return send(res, 200, { ok: true });
         }
         if (url.pathname.endsWith('/options')) {
+          const webdriver = config.automationPolicy === 'off' ? null : reportedWebdriver(body);
+          if (config.automationPolicy !== 'off') signals = automationSignals(ua, webdriver);
+          const denied = automationDecision(config.automationPolicy, ua, webdriver);
+          if (denied) throw new Denied(403, denied);
           let options, payload;
           if (url.pathname === `${PREFIX}register/options`) {
             if (typeof body.invite !== 'string' || body.invite.length !== 43) throw new Denied(403, 'invalid_invite');
@@ -83,12 +91,16 @@ export function createGateway({ config, store, assets, auth = webauthn(config), 
           } else throw new Denied(404, 'not_found');
           // Only one outstanding ceremony per browser. The challenge is held server-side.
           store.takeChallenge(cookie(req, ceremonyCookie));
-          const id = store.challenge({ ...payload, challenge: options.challenge, ua: digest(ua) });
+          const id = store.challenge({ ...payload, challenge: options.challenge, ua: digest(ua), webdriver });
           setCookie(res, ceremonyCookie, id, 120); outcome = 'challenge_issued'; return send(res, 200, options);
         }
         if (![`${PREFIX}register/verify`, `${PREFIX}login/verify`].includes(url.pathname)) throw new Denied(404, 'not_found');
         const pending = store.takeChallenge(cookie(req, ceremonyCookie));
         if (!pending || pending.ua !== digest(ua)) throw new Denied(403, 'invalid_challenge');
+        const webdriver = config.automationPolicy === 'off' ? null : pending.webdriver ?? null;
+        if (config.automationPolicy !== 'off') signals = automationSignals(ua, webdriver);
+        const denied = automationDecision(config.automationPolicy, ua, webdriver);
+        if (denied) throw new Denied(403, denied);
         let credentialID;
         if (url.pathname === `${PREFIX}register/verify` && pending.kind === 'register') {
           const result = await auth.verifyRegistration(body, pending.challenge);
@@ -105,17 +117,22 @@ export function createGateway({ config, store, assets, auth = webauthn(config), 
           credentialID = credential.id;
         } else throw new Denied(403, 'ceremony_mismatch');
         // Budgets are ALSO enforced by credential, so logging in again cannot reset the minute limit.
-        const session = store.session(credentialID, ua, config.sessionSeconds);
+        const session = store.session(credentialID, ua, config.sessionSeconds, webdriver);
         setCookie(res, sessionCookie, session, config.sessionSeconds);
         outcome = 'verified'; return send(res, 200, { ok: true });
       }
       if (!['GET', 'HEAD'].includes(req.method)) throw new Denied(405, 'read_only_gateway');
+      const declared = automationDecision(config.automationPolicy, ua, null, false);
+      if (declared) throw new Denied(403, declared);
       const session = cookie(req, sessionCookie);
       const admitted = session && store.admit(session, ua, config.pagesPerSession);
-      if (!admitted) {
+      if (!admitted || (config.automationPolicy === 'enforce' && admitted.webdriver === null)) {
         outcome = 'admission_required';
         return send(res, 401, assets[`${PREFIX}index.html`].body, 'text/html; charset=utf-8');
       }
+      if (config.automationPolicy !== 'off') signals = automationSignals(ua, admitted.webdriver);
+      const automated = automationDecision(config.automationPolicy, ua, admitted.webdriver);
+      if (automated) throw new Denied(403, automated);
       if (!store.limit(`reader:${admitted.credential_id}`, config.requestsPerMinute)) throw new Denied(429, 'reader_rate');
       const credentialID = admitted.credential_id;
       const active = activeTransfers.get(credentialID) ?? 0;
@@ -136,7 +153,7 @@ export function createGateway({ config, store, assets, auth = webauthn(config), 
       const target = new URL(config.upstream); target.pathname = url.pathname; target.search = url.search;
       const upstream = await fetch(target, {
         method: req.method, redirect: 'manual', signal: proxySignal,
-        headers: { accept: req.headers.accept ?? '*/*', 'user-agent': 'HumanGate/0.2', 'x-human-gate-user': credentialID },
+        headers: { accept: req.headers.accept ?? '*/*', 'user-agent': 'HumanGate/0.3', 'x-human-gate-user': credentialID },
       });
       if (upstream.status >= 300 && upstream.status < 400) { await upstream.body?.cancel(); throw new Denied(502, 'upstream_redirect_rejected'); }
       // No cookies, authorization, forwarding headers, cache validators, or untrusted response headers cross this boundary.
@@ -166,13 +183,16 @@ export function createGateway({ config, store, assets, auth = webauthn(config), 
       if (res.headersSent || res.destroyed) { if (!res.headersSent) res.statusCode = failure.status; res.destroy(); return; }
       const status = failure.status;
       if (status === 429) res.setHeader('retry-after', String(failure.retryAfter));
+      if (['GET', 'HEAD'].includes(req.method) && req.headers.accept?.includes('text/html')) {
+        send(res, status, denialPage(status, outcome, failure.retryAfter, requestID), 'text/html; charset=utf-8'); return;
+      }
       send(res, status, { error: outcome, requestID });
     } finally {
       if (abortOnClose) res.off('close', abortOnClose);
       controller?.abort();
       releaseSlot?.();
       // Close includes partial/aborted streams, which the old finish-only log missed.
-      const record = () => audit({ at: new Date().toISOString(), requestID, status: res.statusCode, reason: outcome, completed: res.writableFinished, chargedBytes });
+      const record = () => audit({ at: new Date().toISOString(), requestID, status: res.statusCode, reason: outcome, completed: res.writableFinished, chargedBytes, automationSignals: signals });
       if (res.destroyed || res.writableFinished) record(); else res.once('close', record);
     }
   });

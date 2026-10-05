@@ -11,6 +11,7 @@ This prototype is ready for local evaluation. Do not treat the demo as a hardene
 7. Issue invitations privately after approving the recipient. There is no automatic enrollment, email sending, or identity verification service.
 8. Test real passkeys and accessibility on the devices your audience uses. A production rollout requires an independent security review and a measured false-rejection study.
 9. Tune extraction limits against your actual page/asset sizes and resource URLs. Defaults are evaluation settings, not measured human/bot thresholds. Query strings count toward resource diversity. See [policy semantics](extraction-policy.md).
+10. Keep `AUTOMATION_POLICY=observe` while evaluating declared automation and legitimate workflows. Enforce mode requires updated browser reports; sessions from older versions without reports must authenticate again. It rejects declarations, not every possible agent. See [automation policy](automation-policy.md).
 
 ## Local validation
 
@@ -21,5 +22,7 @@ This prototype is ready for local evaluation. Do not treat the demo as a hardene
 Sessions, counters, byte usage and resource HMACs persist in SQLite; expiry is checked using wall-clock time. Keep the clock synchronized. Use SQLite's backup API or stop the process before copying the database and its WAL. No automatic database deletion, migration rollback, or key recovery is included. Restoring an older backup also restores older usage and can restore allowance; treat restores as security-sensitive operations.
 
 Upgrading from 0.1 adds tables and indexes on startup without replacing credentials or sessions. Preserve the database and its new resource HMAC key across restarts. Run one gateway process; the concurrency guard is process-local. On restart, old connections close and concurrency starts empty, while durable extraction usage remains. Older binaries do not enforce the new policy even if its tables remain.
+
+Version 0.3 adds a session-report table with cascading cleanup. Deploy the rebuilt gate assets with the updated server; do not mix older assets with enforce mode. No changes to public/private repository visibility or hosting are part of this upgrade.
 
 Changing the public hostname changes the WebAuthn relying party and may require re-enrollment. Do not silently relax origin/RP checks during migrations.

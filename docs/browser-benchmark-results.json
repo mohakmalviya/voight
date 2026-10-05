@@ -1,0 +1,56 @@
+{
+  "generatedAt": "2026-10-05T04:37:24.459Z",
+  "browser": "153.0.8010.12",
+  "scope": "Loopback-only Chromium with a virtual authenticator. All participants are automation; none are human controls.",
+  "humanFalseRejection": "not measured",
+  "scenarios": [
+    {
+      "id": "observe",
+      "name": "Declared automation / observe",
+      "mode": "observe",
+      "accessGranted": true,
+      "originRequests": 2,
+      "signals": [
+        "declared_user_agent",
+        "webdriver"
+      ],
+      "extractionBudgetStopped": false,
+      "description": "A real automated Chromium browser completes the production passkey interface. Observe mode records its signals."
+    },
+    {
+      "id": "headless",
+      "name": "Declared browser / enforce",
+      "mode": "enforce",
+      "accessGranted": false,
+      "originRequests": 0,
+      "signals": [
+        "declared_user_agent",
+        "webdriver"
+      ],
+      "extractionBudgetStopped": false,
+      "description": "The browser declares HeadlessChrome in its user agent. Enforce mode rejects access."
+    },
+    {
+      "id": "webdriver",
+      "name": "WebDriver signal / enforce",
+      "mode": "enforce",
+      "accessGranted": false,
+      "originRequests": 0,
+      "signals": [
+        "webdriver"
+      ],
+      "extractionBudgetStopped": false,
+      "description": "An ordinary-looking user agent still reports navigator.webdriver=true. The registration attempt is rejected."
+    },
+    {
+      "id": "masked",
+      "name": "Suppressed signals / enforce",
+      "mode": "enforce",
+      "accessGranted": true,
+      "originRequests": 4,
+      "signals": [],
+      "extractionBudgetStopped": true,
+      "description": "A controlled test hides both declarations. Automation gets through with an invitation and a virtual passkey; extraction budgets still apply."
+    }
+  ]
+}

@@ -25,4 +25,4 @@ The unit/integration suite separately covers forged/replayed authentication, mul
 
 ## What remains unmeasured
 
-No browser agent, stealth browser, hardware authenticator, accessibility workflow, or real human cohort is included. Human false rejection, classification accuracy and DDoS performance are unknown. An approved agent can stay within policy or spread work across approved credentials. Do not describe these numbers as a bot-detection success rate.
+This HTTP benchmark includes no browser agent, hardware authenticator, accessibility workflow, or real human cohort. The separate [Chromium benchmark](browser-benchmark.md) now exercises UI/passkey workflows and a controlled suppressed-signal case. Human false rejection, classification accuracy and DDoS performance remain unknown. An approved agent can stay within policy or spread work across approved credentials. Do not describe these numbers as a bot-detection success rate.

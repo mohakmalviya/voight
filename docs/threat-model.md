@@ -42,14 +42,16 @@ flowchart LR
 | Operator approves an automated client | It may pass; invitations are an administrative trust boundary |
 | Software authenticator claims user verification | Accepted with a valid invitation; trusted-device attestation is not implemented |
 | Agent operates an already-approved browser | Can read within the same limits as that browser |
+| Browser declares automation | Optional enforcement rejects narrow user-agent declarations and a positive WebDriver report; observe is the default |
+| Agent suppresses declarations or lies about the report | May pass; explicitly demonstrated in the Chromium benchmark |
 | Screenshots, copy/paste, or offline sharing | Cannot prevent after delivery |
 | Volumetric/distributed denial of service | Requires infrastructure controls beyond this single process |
 
 ## Privacy and retention
 
-No client behavioral telemetry or invasive fingerprinting is collected. SQLite stores credential public keys, operator labels, short-lived challenges, token hashes, counters, time-bucketed byte usage, and resource HMACs linked to credentials. Resource HMACs cover the normalized path and query; plaintext URLs are not stored. The per-database HMAC key persists in SQLite. These records are pseudonymous operational data, not anonymous data. Challenges contain an invite hash, never the raw invitation. No passkey private key leaves the authenticator.
+No typing, mouse, canvas or invasive fingerprint telemetry is collected. The browser sends one boolean WebDriver declaration during enrollment/login. In observe/enforce modes it is bound to the ceremony and then to the short-lived session; off mode ignores it. SQLite also stores credential public keys, operator labels, short-lived challenges, token hashes, counters, time-bucketed byte usage, and resource HMACs linked to credentials. Resource HMACs cover the normalized path and query; plaintext URLs are not stored. The per-database HMAC key persists in SQLite. These records are pseudonymous operational data, not anonymous data. Challenges contain an invite hash, never the raw invitation. No passkey private key leaves the authenticator.
 
-Expired invites, challenges, sessions, limit rows, byte buckets and resource records are removed every minute. Credential records, the resource HMAC key and revocation flags persist until the operator deliberately maintains the database. Raw logs contain timestamp, random request ID, status, decision reason, completion flag and charged-byte count only. Incomplete streams are logged even when their HTTP status was already sent as 200. Operators are responsible for log rotation and database file permissions.
+Expired invites, challenges, sessions, limit rows, byte buckets and resource records are removed every minute. Session report records cascade on expiry pruning, logout and revocation. Credential records, the resource HMAC key and revocation flags persist until the operator deliberately maintains the database. Raw logs contain timestamp, random request ID, status, decision reason, completion flag, charged-byte count and constant automation-signal names only. Raw user agents and report payloads are not logged. Incomplete streams are logged even when their HTTP status was already sent as 200. Operators are responsible for log rotation and database file permissions.
 
 ## Important operational limitations
 
@@ -62,6 +64,7 @@ Expired invites, challenges, sessions, limit rows, byte buckets and resource rec
 - Byte limits measure decoded body bytes released into the response stream, not headers, timing channels, or exact network delivery. Whole chunks are withheld when a limit would be crossed. A browser can retain content delivered earlier.
 - Resource limits count path plus query, without application-specific knowledge. Dynamic content at one URL is constrained by byte/request limits; a pool of approved credentials has a larger combined allowance.
 - The tests prove extraction bounds under their specified policies. Approved agents that stay within those policies remain indistinguishable from approved readers here.
+- Enforcement can reject legitimate automation or assistive workflows. Human false rejection has not been measured; start with observe mode and evaluate compatibility.
 - Returning an admission UI with HTTP 401 to every denied protected path intentionally prioritizes data protection over application compatibility.
 
 ## Acceptance criteria

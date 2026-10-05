@@ -23,6 +23,7 @@ export class Store {
       CREATE TABLE IF NOT EXISTS sessions (hash TEXT PRIMARY KEY, credential_id TEXT NOT NULL REFERENCES credentials(id), ua TEXT NOT NULL, expires INTEGER NOT NULL, requests INTEGER NOT NULL DEFAULT 0);
       CREATE TABLE IF NOT EXISTS limits (key TEXT PRIMARY KEY, count INTEGER NOT NULL, expires INTEGER NOT NULL);
       CREATE INDEX IF NOT EXISTS session_expiry ON sessions(expires);
+      CREATE TABLE IF NOT EXISTS session_signals (session_hash TEXT PRIMARY KEY REFERENCES sessions(hash) ON DELETE CASCADE, webdriver INTEGER NOT NULL CHECK(webdriver IN (0,1)));
       CREATE TABLE IF NOT EXISTS settings (key TEXT PRIMARY KEY, value TEXT NOT NULL);
       CREATE TABLE IF NOT EXISTS resource_usage (credential_id TEXT NOT NULL REFERENCES credentials(id), hash TEXT NOT NULL, expires INTEGER NOT NULL, PRIMARY KEY(credential_id,hash));
       CREATE TABLE IF NOT EXISTS byte_usage (credential_id TEXT NOT NULL REFERENCES credentials(id), bucket INTEGER NOT NULL, bytes INTEGER NOT NULL, expires INTEGER NOT NULL, PRIMARY KEY(credential_id,bucket));
@@ -63,15 +64,21 @@ export class Store {
   updateCounter(id, before, after) {
     return this.db.prepare('UPDATE credentials SET counter=? WHERE id=? AND counter=? AND revoked=0').run(after, id, before).changes === 1;
   }
-  session(credentialID, ua, seconds) {
+  session(credentialID, ua, seconds, webdriver = null) {
     const value = token();
-    this.db.prepare('INSERT INTO sessions(hash,credential_id,ua,expires) VALUES(?,?,?,?)').run(digest(value), credentialID, digest(ua), this.now() + seconds * 1000);
-    return value;
+    return atomic(this.db, () => {
+      this.db.prepare('INSERT INTO sessions(hash,credential_id,ua,expires) VALUES(?,?,?,?)').run(digest(value), credentialID, digest(ua), this.now() + seconds * 1000);
+      if (typeof webdriver === 'boolean') this.db.prepare('INSERT INTO session_signals VALUES(?,?)').run(digest(value), Number(webdriver));
+      return value;
+    });
   }
   admit(value, ua, maxRequests) {
     // One atomic increment prevents concurrent requests exceeding the budget.
-    return this.db.prepare(`UPDATE sessions SET requests=requests+1 WHERE hash=? AND ua=? AND expires>? AND requests<?
+    const row = this.db.prepare(`UPDATE sessions SET requests=requests+1 WHERE hash=? AND ua=? AND expires>? AND requests<?
       AND EXISTS(SELECT 1 FROM credentials WHERE id=sessions.credential_id AND revoked=0) RETURNING credential_id`).get(digest(value), digest(ua), this.now(), maxRequests);
+    if (!row) return row;
+    const signal = this.db.prepare('SELECT webdriver FROM session_signals WHERE session_hash=?').get(digest(value));
+    return { ...row, webdriver: signal ? Boolean(signal.webdriver) : null };
   }
   logout(value) { this.db.prepare('DELETE FROM sessions WHERE hash=?').run(digest(value)); }
   revoke(id) {
