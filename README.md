@@ -49,12 +49,74 @@ Visit a few pages to see the check. Then send a burst of requests with a script,
 
 For private mode, start the demo with `MODE=private`, then create an invitation with `npm run admin -- invite "My first reader"`. Paste it under **Have an invitation?** and register a passkey.
 
-## Deploy in front of a site
+## Add it to your website
 
-Copy `.env.example` to `.env`, set `PUBLIC_ORIGIN` and `UPSTREAM`, run `npm run build`, then `npm start`. Read the [deployment requirements](docs/deployment.md) first. The two that matter most:
+Human Gate runs as a reverse proxy between your HTTPS front end and your site. The site itself needs no code changes:
 
-- **The origin must be unreachable except through the gateway.** Otherwise scrapers go around it.
-- **If a reverse proxy, CDN or load balancer sits in front, set `TRUSTED_PROXIES`.** Without it, every visitor appears to come from the proxy's address and shares one budget. Set it to that proxy's addresses or CIDR ranges and nothing broader.
+```
+Visitor → HTTPS proxy (nginx, Caddy, Cloudflare…) → Human Gate :8787 → your site (private address)
+```
+
+### Is your site a fit today?
+
+**Yes, if it is read-only content:** blogs, documentation, news, catalogues, public datasets. These are the sites crawlers and AI agents hit hardest.
+
+**Not yet, if visitors submit forms, log in or check out.** The gateway currently:
+
+- proxies only GET and HEAD, so form posts, logins and POST-based search fail;
+- does not forward visitor cookies to your site, so user sessions do not work;
+- applies the same budgets to search-engine crawlers as to everyone else (verified-crawler allowlisting is planned);
+- runs as a single process with one SQLite database.
+
+These are on the [roadmap](docs/roadmap.md).
+
+### Steps
+
+1. **Move your site to a private address**, for example `127.0.0.1:8788` or an internal IP. Firewall it so only the gateway can reach it. If scrapers can reach the site directly, they bypass every check.
+2. **Configure and start Human Gate:**
+
+   ```sh
+   git clone https://github.com/mohakmalviya/human-gate.git
+   cd human-gate
+   npm ci
+   npm run build
+   cp .env.example .env    # then edit it, see below
+   npm start
+   ```
+
+   The minimum `.env` for a site at `https://example.com` behind a proxy on the same machine:
+
+   ```
+   PUBLIC_ORIGIN=https://example.com
+   UPSTREAM=http://127.0.0.1:8788
+   TRUSTED_PROXIES=127.0.0.1
+   ```
+
+3. **Point your HTTPS proxy at the gateway** instead of at the site. It must keep the original `Host` and *append* the client address to `X-Forwarded-For`. For nginx:
+
+   ```nginx
+   location / {
+     proxy_pass http://127.0.0.1:8787;
+     proxy_set_header Host $host;
+     proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+   }
+   ```
+
+   For Caddy:
+
+   ```
+   example.com {
+     reverse_proxy 127.0.0.1:8787
+   }
+   ```
+
+4. **If a CDN such as Cloudflare sits in front of your proxy**, add the CDN's published IP ranges to `TRUSTED_PROXIES` as well, for example `TRUSTED_PROXIES=127.0.0.1,173.245.48.0/20,...`. Otherwise every visitor appears to be a CDN server and they all share one budget. List only ranges you actually use, and nothing broader: anyone inside a trusted range can choose their own identity. Also make sure the CDN does not cache pages, or it will serve them without the gateway counting them.
+
+5. **Check it works.** Load your site normally. Then, from another machine, send a burst of requests with a script and confirm you get `429` and then a timed block. Lift it with `npm run admin -- unban <that-ip>`.
+
+Read the full [deployment requirements](docs/deployment.md) before going live, and start with the default budgets: they are deliberately generous. Watch the logs for `resource_budget`, `clearance_issued` and `temporarily_blocked` before tightening anything.
+
+### Settings
 
 | Setting | Default (public / private) | Meaning |
 | --- | --- | --- |
