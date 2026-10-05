@@ -62,6 +62,7 @@ test('a new visitor gets the human check, and nothing reaches the site before it
   const html = await get(f, '/article', visitor('203.0.113.10', page));
   assert.equal(html.status, 403);
   assert.match(html.text, /Confirm you are human[\s\S]*\/_gate\/human\.js/);
+  assert.match(html.text, /for up to 6 hours on this browser/);
   const api = await f.request('/data.json', { headers: visitor() });
   assert.equal(api.status, 403); assert.equal(await errorOf(api), 'human_check_required');
   assert.equal((await get(f, '/robots.txt', visitor())).status, 200); // Crawlers can always read the rules.
