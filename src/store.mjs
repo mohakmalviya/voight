@@ -107,6 +107,9 @@ export class Store {
       expires=CASE WHEN expires<=? THEN excluded.expires ELSE expires END RETURNING count`).get(key, now + windowMs, now, now);
     return row.count <= max;
   }
+  // A flag that lasts for a while, kept in the limits table so it is pruned with it.
+  mark(key, ms) { this.db.prepare('INSERT INTO limits VALUES(?,1,?) ON CONFLICT(key) DO UPDATE SET count=1, expires=excluded.expires').run(key, this.now() + ms); }
+  marked(key) { return Boolean(this.db.prepare('SELECT 1 FROM limits WHERE key=? AND expires>?').get(key, this.now())); }
   resetLimit(key) { this.db.prepare('DELETE FROM limits WHERE key=?').run(key); }
   // A resource is the normalized path plus query. Never persist either in plaintext.
   beginResource(subject, resource, config, scope = 'credential') {

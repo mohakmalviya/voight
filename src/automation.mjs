@@ -65,3 +65,17 @@ export function humanReport(report, userAgent = '') {
     notes: [...found, `pointer:${pointer}`, `moves:${path.length ? path.length + 1 : 0}`],
   };
 }
+
+// Requests that no current browser would send. Modern Chrome and Firefox always send Fetch Metadata, Chromium also
+// sends client hints in secure contexts, and every browser sends a language with page loads. Scripts usually skip them.
+export function headerAnomaly(headers, { document = false, secureContext = true } = {}) {
+  const ua = headers['user-agent'] ?? '';
+  if (!/^Mozilla\/5\.0 \(/.test(ua)) return 'not_a_browser';
+  const chrome = /(?:Chrome|Chromium)\/(\d+)/.exec(ua), firefox = /Firefox\/(\d+)/.exec(ua);
+  if (((chrome && +chrome[1] >= 90) || (firefox && +firefox[1] >= 90)) && !headers['sec-fetch-mode']) return 'missing_fetch_metadata';
+  // Android in-app browsers (WebView) and Chrome on iOS do not send client hints.
+  if (secureContext && chrome && +chrome[1] >= 90 && !/; wv\)|CriOS|Firefox/.test(ua) && !headers['sec-ch-ua']) return 'missing_client_hints';
+  // Node's fetch fills in `*`, which no browser sends.
+  if (document && (headers['accept-language'] ?? '*').trim() === '*') return 'missing_language';
+  return null;
+}

@@ -4,7 +4,7 @@ import { finished } from 'node:stream/promises';
 import { createHash, randomUUID } from 'node:crypto';
 import { token, digest } from './store.mjs';
 import { webauthn } from './webauthn.mjs';
-import { automationSignals, reportedWebdriver, automationDecision, humanReport } from './automation.mjs';
+import { automationSignals, reportedWebdriver, automationDecision, humanReport, headerAnomaly } from './automation.mjs';
 import { denialPage, challengePage, humanPage } from './denial.mjs';
 import { declaredAIAgent, crawlerVerifier } from './agents.mjs';
 import { clientAddress, networkPrefix } from './network.mjs';
@@ -19,8 +19,9 @@ const CLEARABLE_REASONS = new Set(['reader_rate', 'resource_budget', 'byte_budge
 const PUBLIC_RESPONSE_HEADERS = ['content-language', 'content-security-policy', 'x-frame-options', 'x-robots-tag'];
 // How long a person must hold the button. Agent click tools press and release at once.
 export const HUMAN_HOLD_MS = 1500;
-// Answered without any check, so crawlers can read the site's rules.
-const OPEN_PATHS = new Set(['/robots.txt']);
+// Outcomes after which a network has to pass the human check for a while, whatever its requests look like.
+const SUSPECT_OUTCOMES = new Set(['automation_detected', 'sandbox_detected', 'human_check_failed', 'temporarily_blocked']);
+const SUSPECT_MS = 3600000;
 
 class Denied extends Error {
   constructor(status, reason, retryAfter = 60) { super(reason); this.status = status; this.retryAfter = retryAfter; }
@@ -87,6 +88,22 @@ export function createGateway({ config, store, assets, auth = webauthn(config), 
   const clearanceCookie = config.secure ? '__Host-hg_clearance' : 'hg_clearance';
   const humanCookie = config.secure ? '__Host-hg_human' : 'hg_human';
   const verifyCrawler = crawlerVerifier(config.verifiedCrawlers ?? [], resolver);
+  // Answered without any check, so crawlers can read the site's rules (and operators can add feeds).
+  const openPaths = new Set(config.openPaths ?? ['/robots.txt']);
+  const secureContext = config.secure || new URL(config.origin).hostname === 'localhost';
+  // Why this visitor should prove it is a person. In `suspicious` mode, anyone without a reason never sees the check.
+  function suspicion(req, ua, ip, network) {
+    if (config.humanCheck === 'always') return 'always';
+    if (store.marked(`suspect:${network}`)) return 'flagged';
+    if (cloud?.has(ip)) return 'datacenter';
+    if (automationSignals(ua).length) return 'automation_user_agent';
+    const document = isDocument(req);
+    const anomaly = headerAnomaly(req.headers, { document, secureContext });
+    if (anomaly) return anomaly;
+    // Page after page from one network faster than people read: everyone there confirms once.
+    if (document && !store.limit(`pages:${network}`, config.humanPagesPerMinute)) { store.mark(`suspect:${network}`, SUSPECT_MS); return 'paging'; }
+    return null;
+  }
   const setCookie = (res, name, value, seconds, sameSite = 'Strict') => res.appendHeader('set-cookie', `${name}=${value}; Path=/; HttpOnly; SameSite=${sameSite}; Max-Age=${seconds}${config.secure ? '; Secure' : ''}`);
   const server = http.createServer({ maxHeaderSize: 16384 }, async (req, res) => {
     const requestID = randomUUID();
@@ -124,7 +141,7 @@ export function createGateway({ config, store, assets, auth = webauthn(config), 
         if (ban) throw new Denied(429, 'temporarily_blocked', Math.max(1, Math.ceil((ban.until - store.now()) / 1000)));
       }
       if (!store.limit(`all:${network ?? digest(ip)}`, config.connectionsPerMinute)) throw new Denied(429, 'connection_rate');
-      const agent = config.aiAgents === 'block' && !gateAsset && !OPEN_PATHS.has(url.pathname) && declaredAIAgent(req.headers);
+      const agent = config.aiAgents === 'block' && !gateAsset && !openPaths.has(url.pathname) && declaredAIAgent(req.headers);
       if (agent) { signals.push(`ai_agent:${agent}`); throw new Denied(403, 'ai_agent'); }
       // Public sites must accept people arriving from links elsewhere; embedding stays same-site.
       const navigation = isPublic && req.headers['sec-fetch-mode'] === 'navigate' && ['GET', 'HEAD'].includes(req.method);
@@ -159,14 +176,14 @@ export function createGateway({ config, store, assets, auth = webauthn(config), 
             setCookie(res, clearanceCookie, clearance, config.clearanceSeconds, 'Lax');
             outcome = 'clearance_issued'; return send(res, 200, { ok: true });
           }
-          if (config.humanCheck === 'always' && url.pathname === `${PREFIX}human/options`) {
+          if (config.humanCheck !== 'off' && url.pathname === `${PREFIX}human/options`) {
             // A small proof of work rides along, so forging passes without a browser still costs something.
             const challenge = token(), difficulty = config.challengeDifficulty;
             store.takeChallenge(cookie(req, ceremonyCookie));
             setCookie(res, ceremonyCookie, store.challenge({ kind: 'human', challenge, difficulty, ua: digest(ua), issued: store.now() }), 120);
             outcome = 'human_check_issued'; return send(res, 200, { challenge, difficulty, holdMs: HUMAN_HOLD_MS });
           }
-          if (config.humanCheck === 'always' && url.pathname === `${PREFIX}human/verify`) {
+          if (config.humanCheck !== 'off' && url.pathname === `${PREFIX}human/verify`) {
             const pending = store.takeChallenge(cookie(req, ceremonyCookie));
             if (!pending || pending.kind !== 'human' || pending.ua !== digest(ua)) throw new Denied(403, 'invalid_challenge');
             const report = humanReport(body.signals, ua);
@@ -243,12 +260,13 @@ export function createGateway({ config, store, assets, auth = webauthn(config), 
       const declared = automationDecision(config.automationPolicy, ua, null, false);
       if (declared) throw new Denied(403, declared);
       // The subject is whoever the budgets are charged to: a credential, a clearance, or a network.
-      if (isPublic && config.humanCheck === 'always' && !OPEN_PATHS.has(url.pathname)) {
+      if (isPublic && config.humanCheck !== 'off' && !openPaths.has(url.pathname)) {
         const human = store.human(cookie(req, humanCookie), ua);
         const crawler = !human && await verifyCrawler(ip, ua);
+        const reason = !human && !crawler && suspicion(req, ua, ip, network);
         if (crawler) signals.push(`crawler:${crawler}`);
-        else if (!human) throw new Denied(403, 'human_check_required');
-        else if (isDocument(req) && !store.limit(`humannav:${human.hash}`, config.humanPagesPerMinute)) {
+        else if (reason) { signals.push(`suspect:${reason}`); throw new Denied(403, 'human_check_required'); }
+        else if (human && isDocument(req) && !store.limit(`humannav:${human.hash}`, config.humanPagesPerMinute)) {
           // Page after page faster than anyone reads: an agent may have taken over. Ask again.
           store.revokePass(human.hash); throw new Denied(403, 'human_recheck');
         }
@@ -292,7 +310,7 @@ export function createGateway({ config, store, assets, auth = webauthn(config), 
       const upstream = await fetch(target, {
         method: req.method, redirect: 'manual', signal: proxySignal,
         headers: {
-          accept: req.headers.accept ?? '*/*', 'user-agent': 'HumanGate/0.6', ...identity,
+          accept: req.headers.accept ?? '*/*', 'user-agent': 'HumanGate/0.7', ...identity,
           ...(req.headers['accept-language'] ? { 'accept-language': req.headers['accept-language'] } : {}),
           ...(range ? { range, ...(req.headers['if-range'] ? { 'if-range': req.headers['if-range'] } : {}) } : {}),
         },
@@ -333,6 +351,7 @@ export function createGateway({ config, store, assets, auth = webauthn(config), 
         : proxySignal?.reason?.name === 'TimeoutError' ? new Denied(504, 'upstream_timeout')
         : new Denied(controller ? 502 : 403, controller ? 'upstream_failure' : 'request_rejected'));
       outcome = failure.message;
+      if (network && config.humanCheck !== 'off' && SUSPECT_OUTCOMES.has(outcome)) store.mark(`suspect:${network}`, SUSPECT_MS);
       if (res.headersSent || res.destroyed) { if (!res.headersSent) res.statusCode = failure.status; res.destroy(); return; }
       const status = failure.status;
       if (status === 429) res.setHeader('retry-after', String(failure.retryAfter));

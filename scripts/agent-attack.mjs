@@ -13,7 +13,7 @@ const origin = http.createServer((req, res) => {
   res.end(`<!doctype html><title>Article ${req.url}</title><h1>Protected article</h1>`);
 }).listen(0, '127.0.0.1');
 await once(origin, 'listening');
-const config = { ...configFromEnv({ MODE: 'public', CHALLENGE_DIFFICULTY: '12', SANDBOX_CHECK: 'enforce' }), upstream: `http://127.0.0.1:${origin.address().port}` };
+const config = { ...configFromEnv({ MODE: 'public', CHALLENGE_DIFFICULTY: '12', SANDBOX_CHECK: 'enforce', HUMAN_CHECK: 'always' }), upstream: `http://127.0.0.1:${origin.address().port}` };
 const store = new Store(':memory:');
 // Every address here is loopback, so a datacenter address is simulated by switching this on for one variant.
 const cloud = { datacenter: false, has() { return this.datacenter; } };
@@ -74,7 +74,10 @@ try {
       await page.waitForFunction(() => !document.querySelector('#hold').disabled, null, { timeout: 30000 });
       const box = await page.locator('#hold').boundingBox();
       await move(page, box.x + box.width / 2, box.y + box.height / 2);
-      await page.mouse.down(); await sleep(2000); await page.mouse.up();
+      // Hold until the button fills, as a person would, rather than for a fixed time.
+      await page.mouse.down();
+      await page.waitForFunction(() => document.querySelector('#hold span')?.textContent === 'Checking…', null, { timeout: 5000 }).catch(() => {});
+      await page.mouse.up();
       await page.waitForFunction(() => document.title.startsWith('Article') || document.querySelector('#human-heading')?.textContent === 'Check stopped.', null, { timeout: 15000 }).catch(() => {});
       const title = await page.title();
       const sandbox = verdict.filter(note => !/^(pointer|moves):/.test(note)).join(' ');
