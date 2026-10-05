@@ -1,6 +1,6 @@
 {
   "name": "human-gate",
-  "version": "0.4.1",
+  "version": "0.5.0",
   "private": true,
   "type": "module",
   "description": "Self-hosted gateway that makes bulk automated extraction slow and expensive without making visitors log in",
@@ -36,6 +36,7 @@
     "browser:install": "node scripts/install-browser.mjs",
     "benchmark:browser": "npm run build && node scripts/browser-benchmark.mjs",
     "showcase": "node scripts/showcase.mjs",
+    "attack:agents": "npm run build && node scripts/agent-attack.mjs",
     "check": "node scripts/check.mjs"
   },
   "dependencies": {

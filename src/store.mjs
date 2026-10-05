@@ -42,7 +42,8 @@ export class Store {
       CREATE INDEX IF NOT EXISTS public_byte_expiry ON public_byte_usage(expires);
       CREATE TABLE IF NOT EXISTS clearances (hash TEXT PRIMARY KEY, network TEXT NOT NULL, expires INTEGER NOT NULL);
       CREATE INDEX IF NOT EXISTS clearance_network ON clearances(network, expires);
-      CREATE TABLE IF NOT EXISTS bans (network TEXT PRIMARY KEY, until INTEGER NOT NULL, count INTEGER NOT NULL, forget INTEGER NOT NULL);`);
+      CREATE TABLE IF NOT EXISTS bans (network TEXT PRIMARY KEY, until INTEGER NOT NULL, count INTEGER NOT NULL, forget INTEGER NOT NULL);
+      CREATE TABLE IF NOT EXISTS human_passes (hash TEXT PRIMARY KEY, ua TEXT NOT NULL, expires INTEGER NOT NULL);`);
     this.db.prepare('INSERT OR IGNORE INTO settings VALUES(?,?)').run('resource_hash_key', token());
     this.resourceKey = Buffer.from(this.db.prepare('SELECT value FROM settings WHERE key=?').get('resource_hash_key').value, 'base64url');
   }
@@ -171,7 +172,23 @@ export class Store {
       return seconds;
     });
   }
-  unban(network) { return this.db.prepare('DELETE FROM bans WHERE network=?').run(network).changes > 0; }
+  // Lifting a block also clears the counters that led to it, so the visitor gets in immediately.
+  unban(network) {
+    return atomic(this.db, () => {
+      for (const key of [`strike:${network}`, `all:${network}`, `reader:network:${network}`]) this.resetLimit(key);
+      return this.db.prepare('DELETE FROM bans WHERE network=?').run(network).changes > 0;
+    });
+  }
+  // A human pass is bound to the browser's user agent, so a copied cookie does not work in another client as is.
+  pass(ua, seconds) {
+    const value = token();
+    this.db.prepare('INSERT INTO human_passes VALUES(?,?,?)').run(digest(value), digest(ua), this.now() + seconds * 1000);
+    return value;
+  }
+  human(value, ua) {
+    return value ? this.db.prepare('SELECT hash FROM human_passes WHERE hash=? AND ua=? AND expires>?').get(digest(value), digest(ua), this.now()) : undefined;
+  }
+  revokePass(hash) { this.db.prepare('DELETE FROM human_passes WHERE hash=?').run(hash); }
   bans() {
     return this.db.prepare('SELECT network, until, count FROM bans WHERE until>? ORDER BY until DESC').all(this.now())
       .map(row => ({ network: row.network, until: new Date(row.until).toISOString(), count: row.count }));
@@ -184,7 +201,7 @@ export class Store {
       FROM credentials`).all(now, now);
   }
   prune() {
-    for (const table of ['invites', 'challenges', 'sessions', 'limits', 'resource_usage', 'byte_usage', 'public_resource_usage', 'public_byte_usage', 'clearances']) {
+    for (const table of ['invites', 'challenges', 'sessions', 'limits', 'resource_usage', 'byte_usage', 'public_resource_usage', 'public_byte_usage', 'clearances', 'human_passes']) {
       this.db.prepare(`DELETE FROM ${table} WHERE expires<=?`).run(this.now());
     }
     // Ban rows outlive the ban itself so a quick repeat offence escalates.

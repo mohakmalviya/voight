@@ -23,6 +23,12 @@ Pre-response budget denials return HTTP 429, a stable JSON reason, and `Retry-Af
 | `parallel_limit` | Too many simultaneous origin transfers | Retry after transfers finish; suggested delay is one second |
 | `response_size` | One response exceeds `MAX_RESPONSE_BYTES` | Operator must reduce the response or adjust the cap. Range requests are shrunk to fit and never hit this |
 | `credential_revoked` | Approval was removed during a transfer | Contact the operator |
+| `ai_agent` | The client declared itself an AI agent (user agent, `Signature-Agent`, or an AI app's browser) | None; set `AI_AGENTS=allow` to admit them |
+| `human_check_required` | Public mode with `HUMAN_CHECK=always` and no valid pass | Pass the check in a browser |
+| `human_recheck` | One pass opened more than `HUMAN_PAGES_PER_MINUTE` pages in a minute; the pass is revoked | Pass the check again |
+| `automation_detected` | The check found automation evidence | None for automated clients |
+| `human_check_failed` | Gesture untrusted, too short, or the pointer never moved | Reload and hold the button |
+| `human_check_limit` | The network earned `HUMAN_PASSES_PER_HOUR` passes this hour | Wait up to an hour |
 
 `Retry-After` for extraction limits identifies the next accounting expiry, not a guarantee that the entire requested response will fit then. Gate assets and passkey endpoints have separate connection/authentication limits and do not consume protected content budgets.
 

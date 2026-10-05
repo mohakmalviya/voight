@@ -4,7 +4,7 @@ Human Gate has two modes with different objectives. Public mode is described fir
 
 ## Public mode: objective and boundary
 
-Let anyone read the site, but make bulk extraction cost far more than reading. Concretely: bound the URLs, bytes and request rate any one network can take per window, make every additional identity cost increasing CPU work, and block networks that ignore limits for a time that grows with repeat offences. It does **not** attempt to classify individual requests as human or automated.
+Let people read the site, keep AI agents and automated browsers out, and make bulk extraction cost far more than reading. Concretely: refuse self-declared and signed AI agents, put a press-and-hold human check in front of every new visitor, bound the URLs, bytes and request rate any one network can take per window, make every additional identity cost increasing CPU work, and block networks that ignore limits for a time that grows with repeat offences. The human check gathers evidence of automation; it cannot prove that a visitor is human.
 
 Identity is the visitor's network: the IPv4 address, or the IPv6 /64. It comes from the socket peer, or from `X-Forwarded-For` when the peer is in `TRUSTED_PROXIES`. The header is walked from the right, and parsing stops at the first untrusted hop. Networks are stored as HMACs keyed by a per-database secret. A solved proof-of-work check issues a clearance: a random token, stored hashed, with its own budget, valid for `CLEARANCE_SECONDS`.
 
@@ -25,9 +25,38 @@ Identity is the visitor's network: the IPv4 address, or the IPv6 /64. It comes f
 | Cache in front of the gateway serving responses | Proxied responses are forced `private`, so shared caches should not store them. A misconfigured CDN can still bypass accounting |
 | Embedding or hotlinking from other sites | Cross-site requests are rejected except top-level navigations, so links from other sites still work |
 
+### AI agents and the human check
+
+With `HUMAN_CHECK=always`, a request without a valid pass gets the check page (HTML) or `403 human_check_required` (anything else). The page asks the server for a challenge, then the visitor holds the button for 1.5 seconds. The verify request reports the webdriver flag, known automation-tool globals, window frame size, plugin count, user-agent brands, whether the gesture was a trusted event, how long it was held, and the last 64 pointer steps. The server rejects:
+
+- `automation_detected`: webdriver set, automation globals present, headless Chrome (a `HeadlessChrome` brand or user agent, or desktop Chrome with no window frame and no plugins), or a mouse path in which one exact step of 2px or more occurs at least 10 times and makes up half or more of such steps;
+- `human_check_failed`: an untrusted gesture, a hold shorter than 1.5 s by the page's clock *or* the server's, or a mouse that reached the button without moving, arrived in a final leap of more than 80px, or pressed more than 3px from where it last moved (how agent click tools behave);
+- `invalid_solution`: the small proof of work that rides along is wrong.
+
+A pass is a random token, stored hashed, valid for `HUMAN_PASS_SECONDS` and only with the same user agent. Each network can earn `HUMAN_PASSES_PER_HOUR`. More than `HUMAN_PAGES_PER_MINUTE` page loads on one pass revokes it and shows the check again.
+
+| Attack | Handling / limitation |
+| --- | --- |
+| Self-declared AI crawler or assistant (GPTBot, ChatGPT-User, ClaudeBot, Claude-User, PerplexityBot, …) | Refused on every request except `robots.txt` |
+| Signed agent (Web Bot Auth: `Signature-Agent`, e.g. ChatGPT agent) | Refused. The signature is not verified because a forged header only shuts out its sender |
+| AI app browser that names itself (e.g. `Claude/2.x` in the user agent) | Refused |
+| Plain Playwright / Puppeteer / Selenium | Webdriver flag, headless traces and straight-line pointer steps |
+| Playwright with the webdriver flag hidden, headless | Headless brand, missing frame and plugins, straight-line pointer steps |
+| Headed Playwright with the flag hidden | Straight-line pointer steps |
+| Agent that clicks by jumping the pointer onto the button | Fails: no pointer movement before the press, or the press lands away from the last movement |
+| Script faking a curved, jittery, eased human path in a headed browser | **Gets through** (field-tested). Budgets, re-checks and blocks still apply |
+| Agent in a person's real browser (Claude in Chrome, Comet, Atlas) | Mainstream agents stop at labelled human checks by design. Not enforced technically |
+| Person passes the check, then lets an agent drive | Only the fast-paging re-check and budgets apply. Not solved here |
+| Copy the pass cookie into another client | Rejected unless the user agent matches; a scraper that copies it too shares that one pass and its re-check |
+| Call the endpoints directly with forged signals | Possible for a determined author; each attempt needs a fresh challenge, a real 1.5 s wait and a proof of work, and passes are capped per network |
+| Spoof a search-engine user agent | Skips the check only when reverse DNS lands in the engine's domain and resolves back to the same address |
+| Keyboard hold through a remote-control protocol | Keyboard holds have no pointer path, so only the trust flag and timing apply |
+
+Link-preview fetchers (chat and social apps) cannot pass the check, so shared links show no preview. AI search engines are refused by design.
+
 **False positives are the main cost.** Many people behind one carrier-grade NAT, office or VPN share one budget. The check gives each browser its own budget, but the per-network cap on checks can run out on very large shared networks. Blocks are timed, explained on the block page, and liftable with `admin unban`. No block is permanent. Defaults have not been measured against real traffic, so start with generous limits.
 
-Clients without JavaScript cannot pass the check. They see the wait time instead. Programmatic clients receive JSON with `Retry-After`, and they can solve the check through the same two endpoints if they choose to pay the work.
+Clients without JavaScript cannot pass either check. Assistive technology that drives the pointer programmatically may fail the pointer-path rules; keyboard holds remain available, and operators can turn the check off. They see the wait time instead. Programmatic clients receive JSON with `Retry-After`, and they can solve the check through the same two endpoints if they choose to pay the work.
 
 ## Private mode: objective and boundary
 

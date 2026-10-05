@@ -1,6 +1,6 @@
 # Human Gate
 
-A self-hosted gateway that sits in front of a website and makes bulk automated extraction slow and expensive, without making ordinary visitors log in or solve image puzzles.
+A self-hosted gateway that sits in front of a website, keeps AI agents and automated browsers out, and makes bulk extraction slow and expensive. Visitors confirm they are human with one press-and-hold a day: no accounts, no image puzzles.
 
 **Status: early prototype, not security-audited.** Read [what this does not promise](#what-this-does-not-promise) before deploying it.
 
@@ -8,11 +8,14 @@ A self-hosted gateway that sits in front of a website and makes bulk automated e
 
 Human Gate is a reverse proxy. Every request for your site passes through it, and it decides whether to fetch the page from your origin.
 
-**Public mode** (default): anyone can browse.
+**Public mode** (default): any person can browse.
 
-1. **Budgets per network.** Each visitor's network (an IPv4 address, or an IPv6 /64) gets a rolling allowance: requests per minute, distinct URLs, decoded bytes and parallel transfers. A person reading a site stays well inside it. A crawler walking every URL does not. Clearing cookies, switching user agent or opening a private window does not reset it.
-2. **A check instead of a wall.** When a browser runs out of budget, it gets a short automatic proof-of-work check (no puzzles, no clicks). Solving it gives that browser its own budget. Each further check from the same network costs twice as much work, and the number per network is capped. One person on a busy shared network gets through. A scraper rotating identities pays more each time.
-3. **Timed blocks for clients that ignore limits.** A client that keeps sending requests after being told to slow down collects strikes, then gets blocked for 5 minutes. Repeat blocks last 4× longer, up to a day. Every block lifts on its own, and the block page says when. Operators can lift one early.
+1. **AI agents that identify themselves are refused.** Crawlers and assistants such as GPTBot, ChatGPT-User, ClaudeBot, Claude-User, PerplexityBot and Perplexity-User, agents that sign their requests (Web Bot Auth, used by ChatGPT agent), and AI apps whose built-in browser names itself are refused on every request. `robots.txt` stays readable.
+2. **A human check for every new visitor.** The first visit shows a clearly labelled "Confirm you are human" page with a press-and-hold button. While the person holds it, the page checks for automation: the webdriver flag, automation-tool globals, headless Chrome, and a pointer that jumps onto the button or glides in identical steps. Passing gives a pass for a day, tied to that browser. Mainstream AI agents are built to stop at human checks and hand control back to the person. A visitor opening pages faster than anyone reads is asked again.
+3. **Search engines still index the site.** Googlebot, Bingbot, Applebot and YandexBot skip the check once their address is verified by reverse and forward DNS, as each engine documents. A crawler name alone gets nothing.
+4. **Budgets per network.** Each visitor's network (an IPv4 address, or an IPv6 /64) gets a rolling allowance: requests per minute, distinct URLs, decoded bytes and parallel transfers. A person reading a site stays well inside it. A crawler walking every URL does not. Clearing cookies, switching user agent or opening a private window does not reset it.
+5. **A check instead of a wall.** When a browser runs out of budget, it gets a short automatic proof-of-work check (no puzzles, no clicks). Solving it gives that browser its own budget. Each further check from the same network costs twice as much work, and the number per network is capped. One person on a busy shared network gets through. A scraper rotating identities pays more each time.
+6. **Timed blocks for clients that ignore limits.** A client that keeps sending requests after being told to slow down collects strikes, then gets blocked for 5 minutes. Repeat blocks last 4× longer, up to a day. Every block lifts on its own, and the block page says when. Operators can lift one early.
 
 **Private mode** (`MODE=private`): content is only for invited people. Each person enrols a passkey with a one-time invitation, and every request needs a short passkey-backed session. Budgets apply per credential.
 
@@ -20,11 +23,13 @@ Both modes fetch only from one fixed origin, follow no redirects, forward no vis
 
 ## What this does not promise
 
-- **It does not tell humans from bots.** It limits volume and raises cost. An agent that browses slowly, within budget, from a normal network looks like a person here. So does a person driving their browser with an AI agent.
+- **It cannot prove a visitor is human.** Every signal the check uses comes from the visitor's browser. In our tests it stopped plain, flag-hidden, headless, headed and jump-clicking Playwright browsers, but a script written to fake a curved, jittery human mouse path got through. Budgets, re-checks and blocks still apply to it.
+- **Agents in a person's own browser rely on good behaviour.** Agents such as Claude in Chrome, Comet or Atlas drive a real browser that looks like a person's. They stop at the human check because they are designed to, not because they cannot click. Once the person passes it, an agent can continue in that browser; only the fast-paging re-check and budgets apply then.
 - **Shared networks share a budget.** Offices, campuses, VPNs and mobile carriers (CGNAT) put many people behind one address. The proof-of-work check exists for this, but heavy shared networks can still hit limits. Measure your own traffic before tightening the defaults.
 - **Distributed scrapers get more allowance.** A scraper with many residential IPs gets one budget per network. This raises its cost but does not stop it.
 - **Content that has been delivered can be copied.** Nothing here prevents screenshots, saving or sharing.
 - **It is not DDoS protection.** It is one process with one SQLite database. Put it behind infrastructure that absorbs floods.
+- **Link previews and AI search do not see your pages.** Chat and social apps (Slack, WhatsApp, X) cannot pass the check, so shared links show no preview. AI search engines are refused by design. Set `HUMAN_CHECK=off` or `AI_AGENTS=allow` if you need either.
 - **The site must be read-only.** Only GET and HEAD are proxied: no form posts, logins or WebSockets yet.
 
 The [threat model](docs/threat-model.md) lists each known bypass.
@@ -65,7 +70,7 @@ Visitor → HTTPS proxy (nginx, Caddy, Cloudflare…) → Human Gate :8787 → y
 
 - proxies only GET and HEAD, so form posts, logins and POST-based search fail;
 - does not forward visitor cookies to your site, so user sessions do not work;
-- applies the same budgets to search-engine crawlers as to everyone else (verified-crawler allowlisting is planned);
+- shows the human check to link-preview fetchers, so links shared in chat apps have no preview;
 - runs as a single process with one SQLite database.
 
 These are on the [roadmap](docs/roadmap.md).
@@ -140,6 +145,12 @@ Read the full [deployment requirements](docs/deployment.md) before going live, a
 | `CLEARANCES_PER_WINDOW` | `5` | Checks one network can pass per `CLEARANCE_SECONDS` |
 | `CLEARANCE_SECONDS` | `3600` | Lifetime of a clearance and its budget |
 | `SESSION_SECONDS` / `PAGES_PER_SESSION` | `300` / `60` | Private mode session lifetime and request cap |
+| `AI_AGENTS` | `block` | `block` refuses self-declared and signed AI agents; `allow` lets them through |
+| `HUMAN_CHECK` | `always` | Public mode: `always` shows every new visitor the press-and-hold check; `off` turns it off |
+| `HUMAN_PASS_SECONDS` | `86400` | How long a passed check lasts in that browser |
+| `HUMAN_PASSES_PER_HOUR` | `60` | Passes one network can earn per hour |
+| `HUMAN_PAGES_PER_MINUTE` | `20` | Page loads per minute before a visitor is asked again (images, scripts and styles do not count) |
+| `VERIFIED_CRAWLERS` | `googlebot,bingbot,applebot,yandexbot` | Search engines that skip the check after DNS verification; `off` for none |
 | `AUTOMATION_POLICY` | `observe` | `off`, `observe` or `enforce` for self-declared automation ([details](docs/automation-policy.md)) |
 
 A "subject" is a network or a clearance in public mode, and a credential in private mode. The defaults are starting points, not measured thresholds. Asset-heavy pages spend URL budget quickly, so check your own pages.
