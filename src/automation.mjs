@@ -55,6 +55,19 @@ export function backForwardRequired(report, userAgent = '') {
   return gecko && !handheld;
 }
 
+// Chromium predicts where a moving pointer goes next (PointerEvent.getPredictedEvents) once moves arrive every few
+// milliseconds, as they do from a mouse or touchpad: 27 to 111 of every person's moves on Windows carried predictions,
+// all but the first few after the hand starts. patchright driving installed Edge, moving like a hand but with a round
+// trip and a pause per step, got none in 83 moves, and 5 of 47 with a real mouse also crossing its window. A script that
+// sends its moves faster gets predictions too, so this catches unhurried scripts, not every script (see the threat
+// model). Measured on Windows only.
+export const PREDICTED_MIN_MOVES = 10;
+export const PREDICTED_MIN_SHARE = 0.2;
+const windowsDesktop = userAgent => /Windows NT/.test(userAgent) && !/Mobile|Android/.test(userAgent);
+// A key held down repeats after at most a second on Windows (its longest delay setting), so a held Space or Enter
+// sends repeated keydowns before the hold completes. A script that presses once and waits sends one.
+export const KEY_REPEAT_HOLD_MS = 1200;
+
 // What the human-check page reports. Every field is client-controlled, so missing or malformed values count against it.
 // `returned` says whether this check's page came back from the hop page without loading again (null: not judged).
 export function humanReport(report, userAgent = '', { returned = null } = {}) {
@@ -85,6 +98,15 @@ export function humanReport(report, userAgent = '', { returned = null } = {}) {
   if ((chromium && devtools !== null && devtools < CONSOLE_TAMPERED_RATIO) || (chromium && worker !== null && worker < CONSOLE_TAMPERED_RATIO)
     || (chromium && devtools !== null && 'worker' in value && worker === null) || value.hooked === true
     || (chromium && (value.touched === false || (value.worker && value.worker.touched === false)))) found.push('console_tampered');
+  // [moves, moves with predictions], counted by the probe for the mouse.
+  const input = Array.isArray(value.input) && value.input.length === 2 && value.input.every(n => Number.isSafeInteger(n) && n >= 0) ? value.input : null;
+  if (input && chromium && pointer === 'mouse' && windowsDesktop(userAgent) && input[0] >= PREDICTED_MIN_MOVES && input[1] < input[0] * PREDICTED_MIN_SHARE) found.push('no_predicted_input');
+  // Touch input on a Windows PC that reports no multi-touch screen, or on a Mac (Macs have no touchscreen): what the
+  // DevTools protocol's touch emulation produces. Windows touchscreens report 5 or more touch points.
+  const touchPoints = Number.isSafeInteger(value.env?.touch) ? value.env.touch : null;
+  if (pointer === 'touch' && touchPoints !== null && ((windowsDesktop(userAgent) && touchPoints < 2) || (/Macintosh/.test(userAgent) && touchPoints === 0))) found.push('emulated_touch');
+  const repeats = Number.isSafeInteger(value.repeats) && value.repeats >= 0 ? value.repeats : 0;
+  const unrepeated = pointer === 'keyboard' && windowsDesktop(userAgent) && holdMs >= KEY_REPEAT_HOLD_MS && repeats === 0;
   const gap = value.pressGap, final = path.at(-1);
   return {
     automated: found.length > 0,
@@ -95,7 +117,12 @@ export function humanReport(report, userAgent = '', { returned = null } = {}) {
     // Touch and keys never hover.
     jumped: pointer === 'mouse' && (path.length < 2 || Math.hypot(final[0], final[1]) > 80
       || !(Number.isFinite(gap) && gap >= 0 && gap <= 3)),
-    notes: [...found, `pointer:${pointer}`, `moves:${path.length ? path.length + 1 : 0}`, ...(devtools === null ? [] : [`devtools:${devtools.toFixed(2)}`]), ...(worker === null ? [] : [`worker:${worker.toFixed(2)}`])],
+    // A key held on Windows that never repeated. People with key repeat switched off land here too, so this fails the
+    // check (the page suggests the pointer) rather than calling the browser automated.
+    unrepeated,
+    notes: [...found, ...(unrepeated ? ['no_key_repeat'] : []), `pointer:${pointer}`, `moves:${path.length ? path.length + 1 : 0}`,
+      ...(input && pointer === 'mouse' ? [`predicted:${input[1]}/${input[0]}`] : []), ...(pointer === 'keyboard' ? [`repeats:${repeats}`] : []),
+      ...(devtools === null ? [] : [`devtools:${devtools.toFixed(2)}`]), ...(worker === null ? [] : [`worker:${worker.toFixed(2)}`])],
   };
 }
 

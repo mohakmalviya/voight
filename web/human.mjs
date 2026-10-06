@@ -14,7 +14,8 @@ async function post(path, body) {
     throw new Error(result.error === 'sandbox_detected' ? 'This browser appears to be running on a server or in a virtual machine, not on a personal device. If you are browsing yourself, contact this website’s operator.'
       : result.error === 'automation_detected' ? 'This browser appears to be controlled by automation software or an AI agent, so it cannot continue. If you have developer tools open, close them and reload.'
       : result.error === 'human_check_limit' || response.status === 429 ? 'Too many checks from your network. Wait a while, then reload.'
-      : result.error === 'human_check_failed' ? 'Move the pointer onto the button, then hold it until it fills. Reload to try again.'
+      : result.error === 'human_check_failed' ? (pointer === 'keyboard' ? 'Hold the key down until the button fills, or move the pointer onto the button and hold it. Reload to try again.'
+        : 'Move the pointer onto the button, then hold it until it fills. Reload to try again.')
       : 'The check could not be completed. Reload the page to try again.');
   }
   return result;
@@ -36,7 +37,7 @@ async function work(challenge, difficulty) {
   }
 }
 
-let holdMs = 1500, started = 0, frame = 0, timer = 0, pressGap = -1, pointer = 'unknown', trusted = false, solution, probe, last;
+let holdMs = 1500, started = 0, frame = 0, timer = 0, pressGap = -1, pointer = 'unknown', trusted = false, repeats = 0, solution, probe, last;
 // The last steps the pointer took. People move in uneven curves; scripted pointers jump or move in identical steps.
 const path = [];
 addEventListener('pointermove', event => {
@@ -53,7 +54,7 @@ function fail(message) {
 }
 function begin(event, kind) {
   if (button.disabled || started) return;
-  trusted = event.isTrusted; pointer = kind; started = performance.now(); setState('holding');
+  trusted = event.isTrusted; pointer = kind; repeats = 0; started = performance.now(); setState('holding');
   label.textContent = 'Keep holding…'; status.textContent = '';
   // Animation frames only draw the fill; they pause in covered windows, so a timer completes the hold.
   const tick = () => {
@@ -75,7 +76,7 @@ async function finish() {
   started = 0; button.disabled = true; label.textContent = 'Checking…'; setState('checking');
   try {
     // The probe measures the browser at the end, so a client that attaches after the page loads is still seen.
-    const [nonce, report] = await Promise.all([solution, probe.then(measure => measure.seal({ trusted, holdMs: Math.round(held), pointer, path, pressGap }))]);
+    const [nonce, report] = await Promise.all([solution, probe.then(measure => measure.seal({ trusted, holdMs: Math.round(held), pointer, path, pressGap, repeats }))]);
     await post('verify', { nonce, report });
     setState('done'); heading.textContent = 'Verified'; label.textContent = 'Verified'; status.textContent = 'Opening the page…';
     location.reload();
@@ -92,7 +93,9 @@ for (const name of ['pointerup', 'pointercancel', 'lostpointercapture']) button.
 button.addEventListener('keydown', event => {
   if (event.key !== ' ' && event.key !== 'Enter') return;
   event.preventDefault();
+  // A key held down repeats; the gateway expects that on Windows.
   if (!event.repeat) begin(event, 'keyboard');
+  else if (started && pointer === 'keyboard' && event.isTrusted) repeats++;
 });
 button.addEventListener('keyup', event => { if (event.key === ' ' || event.key === 'Enter') { event.preventDefault(); cancel(); } });
 button.addEventListener('contextmenu', event => event.preventDefault());

@@ -246,7 +246,7 @@ export function createGateway({ config, store, assets, auth = webauthn(config), 
             if (sandbox) signals.push(...sandbox.notes);
             if (report.automated) throw new Denied(403, 'automation_detected');
             // The server clock checks the hold too, so a script cannot just claim one.
-            if (!report.trusted || report.jumped || report.holdMs < HUMAN_HOLD_MS || store.now() - pending.issued < HUMAN_HOLD_MS) throw new Denied(403, 'human_check_failed');
+            if (!report.trusted || report.jumped || report.unrepeated || report.holdMs < HUMAN_HOLD_MS || store.now() - pending.issued < HUMAN_HOLD_MS) throw new Denied(403, 'human_check_failed');
             if (!solved(pending.challenge, body.nonce, pending.difficulty)) throw new Denied(403, 'invalid_solution');
             const enforce = config.sandboxCheck === 'enforce';
             if (enforce && sandbox.score >= SANDBOX_BLOCK_SCORE) throw new Denied(403, 'sandbox_detected');

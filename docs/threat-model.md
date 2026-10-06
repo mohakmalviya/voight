@@ -44,8 +44,8 @@ Field test (Windows laptop): installed Edge read 20 pages a minute with no check
 
 With `HUMAN_CHECK=always`, or once there is a reason, a request without a valid pass gets the check page (HTML) or `403 human_check_required` (anything else). The page asks the server for a challenge, then the visitor holds the button for 1.5 seconds. The verify request reports the webdriver flag, known automation-tool globals, window frame size, plugin count, user-agent brands, whether the gesture was a trusted event, how long it was held, and the last 64 pointer steps. The server rejects:
 
-- `automation_detected`: webdriver set, automation globals present, headless Chrome (a `HeadlessChrome` brand or user agent, or desktop Chrome with no window frame and no plugins), a mouse path in which one exact step of 2px or more occurs at least 10 times and makes up half or more of such steps, a DevTools-protocol client attached (`devtools_protocol`, below), or desktop Firefox whose check page did not come back from the back/forward cache (`no_back_forward_cache` and `back_forward_reload`, below);
-- `human_check_failed`: an untrusted gesture, a hold shorter than 1.5 s by the page's clock *or* the server's, or a mouse that reached the button without moving, arrived in a final leap of more than 80px, or pressed more than 3px from where it last moved (how agent click tools behave);
+- `automation_detected`: webdriver set, automation globals present, headless Chrome (a `HeadlessChrome` brand or user agent, or desktop Chrome with no window frame and no plugins), a mouse path in which one exact step of 2px or more occurs at least 10 times and makes up half or more of such steps, a DevTools-protocol client attached (`devtools_protocol`, below), desktop Firefox whose check page did not come back from the back/forward cache (`no_back_forward_cache` and `back_forward_reload`, below), or, on Windows, a Chromium mouse path whose moves almost never carried pointer predictions (`no_predicted_input`) or a touch hold on a PC without a multi-touch screen or on a Mac (`emulated_touch`, both below);
+- `human_check_failed`: an untrusted gesture, a hold shorter than 1.5 s by the page's clock *or* the server's, or a mouse that reached the button without moving, arrived in a final leap of more than 80px, or pressed more than 3px from where it last moved (how agent click tools behave), or, on Windows, a held Space or Enter that never repeated (`no_key_repeat`, below);
 - `invalid_solution`: the small proof of work that rides along is wrong.
 
 ### DevTools-protocol clients
@@ -62,7 +62,7 @@ Field measurements (Windows laptop, Edge 154, 125% display scaling):
 | Playwright Chromium, headless or in a window, any flags | 4.62–6.13 |
 | Playwright driving installed Edge | 4.77–5.08 |
 | Playwright attached over `connectOverCDP` to an Edge window opened normally | 4.47–6.04 |
-| patchright (Playwright fork that avoids `Runtime.enable`) | 1.20–1.29: **not detected** |
+| patchright (Playwright fork that avoids `Runtime.enable`) | 1.17–1.33: **not detected** by the timing (see scripted input, below) |
 
 The ratio is self-normalising, so a slow machine is not a problem; what separates the two groups is serialisation work that only exists when a client is listening.
 
@@ -96,6 +96,28 @@ Field measurements (Windows laptop, against the real gateway on localhost, `HUMA
 | Camoufox with `browser.sessionhistory.max_total_viewers=-1` and `fission.bfcacheInParent=true` | Came back from the cache and got a challenge. Playwright then lost the page: every page call and even `mouse.move` failed with "Target crashed" (the tab's content process went away; the browser stayed connected). The script could not hold the button |
 
 That last row is not a fix. On a probe page without the opener policy, the same two preferences plus "blind" input (sleeps and fixed coordinates, no page calls) completed a hold. An attacker who also removes the `Cross-Origin-Opener-Policy` header (for example with Playwright's request interception) or who drives the window with operating-system input should get through, and is then judged only by the pointer rules and the machine signals. Not yet measured: Firefox on Mac and Linux, Firefox ESR, Tor Browser, and Firefox with `browser.sessionhistory.max_total_viewers` or `browser.cache.memory` changed by hand. Firefox on Android phones and on iOS does not make the trip; a Firefox build that claims to be one of those (Android user agent and touch points) is not asked to either. A person whose Firefox fails the trip sees "Automated browser detected" with a note that changed settings or add-ons can cause it; reloading tries again.
+
+### Scripted input in Chromium (patchright)
+
+patchright is a Playwright fork that never enables the `Runtime` domain, so the DevTools timing reads like a person's (1.17–1.33), and driving installed Edge it shows the same machine as a person's Edge: every property the check page and a wider lab page read (voices, plugins, permissions, client hints, GPU, storage quota, media devices) matched a fresh Edge profile opened by hand. Its mouse, keyboard and touch events are trusted. What is left is how the input arrives.
+
+- **Mouse** (`no_predicted_input`, Chromium on Windows). Chromium attaches predictions of where a moving pointer goes next (`PointerEvent.getPredictedEvents()`) once moves arrive a few milliseconds apart, as they do from a mouse. The check's own script counts mouse moves and those that carried predictions, and reports `predicted:<with>/<moves>`. With 10 or more moves and fewer than a fifth predicted, the check fails. Predictions are missing only for the first few moves after the hand starts from rest.
+- **Keyboard** (`no_key_repeat`, Windows). A key held down repeats after at most one second on Windows (its longest delay setting), so a 1.5-second hold of Space or Enter sends repeated keydowns. A script that presses once and waits sends one. The page reports `repeats:<n>`; none in a hold of 1.2 s or more fails the check as `human_check_failed`, not as automation, because people with key repeat turned off (Filter Keys) land here too, and the page then suggests holding the button with the pointer.
+- **Touch** (`emulated_touch`). The DevTools protocol's touch emulation reports one touch point (or none when touch events are sent without it). Windows touchscreens report 5 or more and Macs have no touchscreen, so a touch hold on Windows with fewer than 2 touch points, or on a Mac with none, is refused. Android and iPad are not judged.
+
+Field measurements (Windows laptop, Edge 154 and Chrome, 125% display scaling; the person's moves are operating-system input from `SendInput` on a fresh profile, the rest against the real gateway on localhost with `SANDBOX_CHECK=enforce`):
+
+| Input | Result |
+| --- | --- |
+| A person's mouse on Edge, three runs | 27 of 32, 45 of 52 and 111 of 121 moves predicted |
+| A person's mouse on Chrome | 111 of 121 predicted |
+| patchright on installed Edge, curved and eased 40-step path with a pause per step (the run that passed 0.9.1) | 0 of 40, three runs: refused (`no_predicted_input`) |
+| The same while a real mouse also crossed its window | 5 of 47: refused; 42 of 73: passed (the real mouse supplied the predictions) |
+| patchright holding Space (`keyboard.down`, wait, `keyboard.up`) | 0 repeats: `human_check_failed` (`no_key_repeat`) |
+| patchright with touch emulation, a touch held through `Input.dispatchTouchEvent` | 1 touch point: refused (`emulated_touch`) |
+| Stock Playwright on installed Edge, same path | 0 of 40, refused (also `devtools_protocol` and `webdriver`) |
+
+These are bar-raisers, not proofs. Measured in the lab, predictions follow the spacing of the moves, not where they come from: raw `Input.dispatchMouseEvent` moves sent 8 ms apart got 98 of 104, and patchright's path sent without pauses got 42 of 47 and **got through**. A script can send repeated keydowns itself (`autoRepeat`), and can emulate 10 touch points. Operating-system input (`SendInput`, `pyautogui`, a remote-desktop tool driving a real window) produces real predictions, repeats and touch points, and gets through all three. Not yet measured: Mac and Linux (not judged there), touchpads, pens (a pen hold is not judged), and real touchscreens. Possible false positives: pointers that report about 30 times a second, such as some head and eye trackers and slow remote-desktop links, can land under the one-fifth line.
 
 ### The scrambled check script
 
@@ -137,7 +159,9 @@ A pass is a random token, stored hashed, valid for `HUMAN_PASS_SECONDS` (six hou
 | Playwright driving installed Chrome or Edge, faked human path | DevTools client (field-tested) |
 | Playwright or an agent attached to a browser the person opened (`connectOverCDP`) | DevTools client (field-tested) |
 | patchright with its bundled Chromium | Not caught by the timing. `unbranded_browser` plus `no_voices` scores 4, refused by the default `SANDBOX_CHECK=enforce` (field-tested); gets through in `log` mode |
-| patchright or a similar fork driving installed Chrome or Edge with a faked human path | **Gets through** (field-tested). Budgets, re-checks and blocks still apply |
+| patchright or a similar fork driving installed Chrome or Edge with a faked human path, a pause per step | Refused on Windows: its moves carry no pointer predictions (`no_predicted_input`, field-tested; got in before 0.9.2) |
+| The same fork sending its path without pauses | **Gets through** (field-tested). Budgets, re-checks and blocks still apply |
+| The same fork holding Space, or holding with emulated touch | Fails on Windows: no key repeat; touch on a PC without a touchscreen (field-tested) |
 | Stock Playwright, webdriver flag hidden, `console.debug` replaced by an init script | Refused: `console_tampered` and `devtools_protocol` from the worker (field-tested) |
 | Stock Playwright, verify request rewritten (`page.route`) to report a normal ratio | Refused: `report_tampered` (field-tested; got in before 0.9) |
 | Stock Playwright, check script patched by name in transit | Refused: nothing to find by name; the timing still runs (field-tested) |
@@ -160,13 +184,14 @@ A pass is a random token, stored hashed, valid for `HUMAN_PASS_SECONDS` (six hou
 | Copy the pass cookie into another client | Rejected unless the user agent matches; a scraper that copies it too shares that one pass and its re-check |
 | Call the endpoints directly with forged signals | Possible for a determined author; each attempt needs a fresh challenge, a real 1.5 s wait and a proof of work, and passes are capped per network |
 | Spoof a search-engine user agent | Skips the check only when reverse DNS lands in the engine's domain and resolves back to the same address |
-| Keyboard hold through a remote-control protocol | Keyboard holds have no pointer path, so only the trust flag and timing apply |
+| Keyboard hold through a remote-control protocol | On Windows the held key must repeat; a script can send the repeats itself. Elsewhere only the trust flag and timing apply |
+| Operating-system input (`SendInput`, `pyautogui`) driving a real browser | Real predictions, repeats and pointer path: judged only by the DevTools timing and machine signals, so a fork like patchright **gets through** |
 
 Link-preview fetchers (chat and social apps) cannot pass the check, so shared links show no preview. AI search engines are refused by design.
 
 **False positives are the main cost.** Many people behind one carrier-grade NAT, office or VPN share one budget. The check gives each browser its own budget, but the per-network cap on checks can run out on very large shared networks. Blocks are timed, explained on the block page, and liftable with `admin unban`. No block is permanent. Defaults have not been measured against real traffic, so start with generous limits.
 
-Clients without JavaScript cannot pass either check. Assistive technology that drives the pointer programmatically may fail the pointer-path rules; keyboard holds remain available, and operators can turn the check off. They see the wait time instead. Programmatic clients receive JSON with `Retry-After`, and they can solve the check through the same two endpoints if they choose to pay the work.
+Clients without JavaScript cannot pass either check. Assistive technology that drives the pointer programmatically may fail the pointer-path rules, and pointers that report about 30 times a second may fail `no_predicted_input` on Windows; keyboard holds remain available (on Windows the key must repeat), and operators can turn the check off. They see the wait time instead. Programmatic clients receive JSON with `Retry-After`, and they can solve the check through the same two endpoints if they choose to pay the work.
 
 ## Private mode: objective and boundary
 

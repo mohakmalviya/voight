@@ -113,7 +113,7 @@ test('automation is caught even when it performs the hold, and a claimed hold mu
     assert.equal(response.status, status, reason); assert.equal(await errorOf(response), reason);
   }
   const report = humanReport({ webdriver: 'yes', holdMs: 'long', path: [[1, 'x', 2], 'junk'], pointer: '<script>', frame: 'none' });
-  assert.deepEqual(report, { automated: false, trusted: false, holdMs: 0, jumped: false, notes: ['pointer:unknown', 'moves:0'] });
+  assert.deepEqual(report, { automated: false, trusted: false, holdMs: 0, jumped: false, unrepeated: false, notes: ['pointer:unknown', 'moves:0'] });
   // Touch and keyboard users never hover, and a frameless phone browser is not headless.
   assert.equal(humanReport({ ...HUMAN, pointer: 'touch', path: [] }).jumped, false);
   assert.equal(humanReport({ ...HUMAN, frame: [0, 0], plugins: 0 }, 'Mozilla/5.0 (Linux; Android 15) Chrome/141.0 Mobile Safari/537.36').automated, false);
@@ -141,6 +141,49 @@ test('automation is caught even when it performs the hold, and a claimed hold mu
   // A slow, careful hand creeping one pixel at a time is not mistaken for a script.
   assert.equal(humanReport({ ...HUMAN, path: Array.from({ length: 30 }, () => [1, 0, 17]) }).automated, false);
   assert.deepEqual((await f.post('/_gate/human/verify', { signals: HUMAN }, null, visitor())).status, 403); // No issued check.
+});
+
+test('scripted input on Windows is caught: unpredicted moves, emulated touch and a key that never repeats', async t => {
+  const edge = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/141.0.0.0 Safari/537.36 Edg/141.0.0.0';
+  const firefox = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:143.0) Gecko/20100101 Firefox/143.0';
+  const mac = 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/141.0.0.0 Safari/537.36';
+  // Measured: a person's mouse 27/32, 45/52 and 111/121 moves with predictions; patchright 0/40, 0/43, and 5/47 with a
+  // real mouse also crossing its window.
+  for (const input of [[32, 27], [52, 45], [121, 111], [12, 3], [9, 0]]) assert.equal(humanReport({ ...HUMAN, input }, edge).automated, false, String(input));
+  assert.deepEqual(humanReport({ ...HUMAN, input: [40, 0] }, edge).notes, ['no_predicted_input', 'pointer:mouse', 'moves:9', 'predicted:0/40']);
+  assert.equal(humanReport({ ...HUMAN, input: [47, 5] }, edge).automated, true);
+  // Not judged where it was not measured: other engines and other systems.
+  for (const ua of [firefox, mac, 'Mozilla/5.0 (X11; Linux x86_64) Chrome/141.0 Safari/537.36']) assert.equal(humanReport({ ...HUMAN, input: [40, 0] }, ua).automated, false, ua);
+  for (const input of [[40], [40, -1], [40, 0.5], '40,0', null]) assert.equal(humanReport({ ...HUMAN, input }, edge).automated, false);
+  // The DevTools protocol's touch emulation on a PC without a touchscreen, or on a Mac. Real touchscreens report 5+.
+  const touch = { ...HUMAN, pointer: 'touch', path: [], pressGap: -1 };
+  assert.deepEqual(humanReport({ ...touch, env: { touch: 1 } }, edge).notes.slice(0, 1), ['emulated_touch']);
+  assert.equal(humanReport({ ...touch, env: { touch: 0 } }, mac).automated, true);
+  assert.equal(humanReport({ ...touch, env: { touch: 10 } }, edge).automated, false);
+  assert.equal(humanReport({ ...touch, env: { touch: 5 } }, 'Mozilla/5.0 (Linux; Android 15) Chrome/141.0 Mobile Safari/537.36').automated, false);
+  assert.equal(humanReport({ ...touch, env: { touch: 1 } }, 'Mozilla/5.0 (Linux; Android 15) Chrome/141.0 Mobile Safari/537.36').automated, false);
+  // A key held on Windows repeats; one keydown and a wait does not. People with repeat off are told to use the pointer.
+  const keyboard = { ...HUMAN, pointer: 'keyboard', path: [], pressGap: -1 };
+  assert.equal(humanReport({ ...keyboard, repeats: 14 }, edge).unrepeated, false);
+  assert.deepEqual(humanReport({ ...keyboard, repeats: 0 }, firefox).notes, ['no_key_repeat', 'pointer:keyboard', 'moves:0', 'repeats:0']);
+  assert.equal(humanReport({ ...keyboard, repeats: 'many' }, edge).unrepeated, true);
+  assert.equal(humanReport({ ...keyboard, repeats: 0 }, mac).unrepeated, false); // A Mac's longest repeat delay is longer than the hold.
+  assert.equal(humanReport({ ...keyboard, repeats: 0, holdMs: 900 }, edge).unrepeated, false); // Too short to judge; fails the hold anyway.
+  const f = await fixture(t);
+  const cases = [
+    [{ input: [40, 0] }, 'automation_detected'],
+    [{ ...touch, env: { touch: 1 } }, 'automation_detected'],
+    [{ ...keyboard, repeats: 0 }, 'human_check_failed'],
+  ];
+  for (const [index, [signals, reason]] of cases.entries()) {
+    const headers = visitor(`203.0.113.${200 + index}`, { 'user-agent': edge });
+    const response = await check(f, { headers, signals });
+    assert.equal(response.status, 403); assert.equal(await errorOf(response), reason);
+  }
+  for (const [index, signals] of [{ input: [52, 45] }, { ...keyboard, repeats: 14 }, { ...touch, env: { touch: 10 } }].entries()) {
+    const response = await check(f, { headers: visitor(`203.0.113.${210 + index}`, { 'user-agent': edge }), signals });
+    assert.equal(response.status, 200, await response.clone().text());
+  }
 });
 
 test('each check gets its own scrambled script, and only that script can seal a report the server accepts', async t => {

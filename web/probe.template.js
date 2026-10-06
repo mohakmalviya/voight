@@ -34,9 +34,24 @@ const $_touched = $_Error => {
   $_debug[$S('apply')]($_con, [$_error]);
   return $_reads.length > 0;
 };
+// Mouse moves, and how many of them carried Chromium's predictions of where the pointer goes next (see
+// PREDICTED_MIN_MOVES on the server). Counted here, inside this check's own script, from the moment it loads.
+const $_pointerProto = $_g[$S('PointerEvent')]?.[$S('prototype')];
+const $_predict = $_pointerProto?.[$S('getPredictedEvents')];
+const $_input = [0, 0];
+let $_lastMove = null;
+$_g[$S('addEventListener')]($S('pointermove'), $_event => {
+  if (!$_event[$S('isTrusted')] || $_event[$S('pointerType')] !== $S('mouse')) return;
+  const $_at = $_event[$S('clientX')] + ',' + $_event[$S('clientY')];
+  if ($_at === $_lastMove) return; // Browsers re-send the position after layout changes.
+  $_lastMove = $_at; $_input[0]++;
+  try { if ($_predict && $_predict[$S('call')]($_event)[$S('length')] > 0) $_input[1]++; } catch {}
+}, { capture: true, passive: true });
+
 // Replaced console or timer functions, swapped after this script loaded or rewritten to look native.
 const $_hooked = () => $_con[$S('debug')] !== $_debug || $_perf[$S('now')] !== $_nowFn
-  || ![$_debug, $_clear, $_nowFn, $_g[$S('Function')][$S('prototype')][$S('toString')]].every($_native);
+  || ($_predict && $_pointerProto[$S('getPredictedEvents')] !== $_predict)
+  || ![$_debug, $_clear, $_nowFn, $_g[$S('Function')][$S('prototype')][$S('toString')], ...($_predict ? [$_predict] : [])].every($_native);
 
 const $_globals = () => [$S('__playwright__binding__'), $S('__pwInitScripts'), $S('_selenium'), $S('callSelenium'), $S('__webdriver_evaluate'),
   $S('__selenium_evaluate'), $S('__nightmare'), $S('domAutomation'), $S('domAutomationController'), $S('callPhantom'), $S('_phantom')].some($_name => $_name in $_g)
@@ -136,7 +151,7 @@ export default function $_start() {
       return $_seal({ ...$_gesture,
         [$S('webdriver')]: $_nav[$S('webdriver')] === true, [$S('automationGlobals')]: $_globals(), [$S('hooked')]: $_hooked(), [$S('devtools')]: $_ratio, [$S('worker')]: $_workerReport, [$S('touched')]: $_touch,
         [$S('frame')]: [$_g.outerWidth - $_g.innerWidth, $_g.outerHeight - $_g.innerHeight], [$S('plugins')]: $_nav[$S('plugins')]?.length ?? -1,
-        [$S('brands')]: $_brands, [$S('engine')]: $_engine(), [$S('env')]: $_env });
+        [$S('brands')]: $_brands, [$S('engine')]: $_engine(), [$S('input')]: [...$_input], [$S('env')]: $_env });
     },
   };
 }
