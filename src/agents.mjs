@@ -20,6 +20,8 @@ export function declaredAIAgent(headers) {
   if (aiAgentUA.test(headers['user-agent'] ?? '')) return 'user_agent';
   if (aiBrowserApp.test(headers['user-agent'] ?? '')) return 'ai_browser';
   if (headers['signature-agent'] || /tag="web-bot-auth"/i.test(headers['signature-input'] ?? '')) return 'signed_agent';
+  // Firefox's AI features (link previews that summarise a page) fetch it with this header.
+  if (headers['x-firefox-ai']) return 'firefox_ai';
   return null;
 }
 

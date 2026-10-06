@@ -87,6 +87,7 @@ button:disabled{cursor:not-allowed;opacity:.5}
 [data-state=error] .progress{display:none}
 
 .meta{display:flex;flex-wrap:wrap;justify-content:center;gap:4px 18px;color:var(--faint);font-size:12px;text-align:center}
+.meta a,.help a{color:var(--muted);text-underline-offset:2px}
 .meta code{font:12px/1.5 ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;color:var(--muted);overflow-wrap:anywhere;user-select:all;-webkit-user-select:all}
 
 /* Private access (passkeys). */

@@ -1,0 +1,10 @@
+{
+  "rules": [
+    { "name": "my-office", "action": "allow", "cidr": ["198.51.100.0/24", "2001:db8:1234::/48"] },
+    { "name": "uptime-monitor", "action": "allow", "cidr": ["203.0.113.7"], "path": "^/health$" },
+    { "name": "feeds", "action": "allow", "path": "^/(?:feed|rss)\\.xml$" },
+    { "name": "known-scraper", "action": "deny", "userAgent": "ScrapeKit|DataHarvest" },
+    { "name": "no-referer-to-downloads", "action": "check", "path": "^/downloads/", "headers": { "Referer": "^$" } },
+    { "name": "admin-area", "action": "check", "path": "^/admin/" }
+  ]
+}

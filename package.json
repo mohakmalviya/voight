@@ -1,6 +1,6 @@
 {
   "name": "human-gate",
-  "version": "0.9.5",
+  "version": "0.10.0",
   "private": true,
   "type": "module",
   "description": "Self-hosted gateway that makes bulk automated extraction slow and expensive without making visitors log in",
