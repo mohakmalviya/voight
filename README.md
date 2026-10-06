@@ -91,8 +91,8 @@ These are on the [roadmap](docs/roadmap.md).
 2. **Configure and start Voight:**
 
    ```sh
-   git clone https://github.com/mohakmalviya/human-gate.git
-   cd human-gate
+   git clone https://github.com/mohakmalviya/voight.git
+   cd voight
    npm ci
    npm run build
    npm run cloud-ranges    # datacenter address lists; rerun weekly (cron)
@@ -203,8 +203,8 @@ Contributions are welcome. Voight is a small project, and every change is judged
 You need Node.js 24.14 or newer.
 
 ```sh
-git clone https://github.com/mohakmalviya/human-gate.git
-cd human-gate
+git clone https://github.com/mohakmalviya/voight.git
+cd voight
 npm ci
 npm run build
 npm run demo             # the gateway on http://localhost:8787 in front of a sample site

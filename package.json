@@ -7,12 +7,12 @@
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/mohakmalviya/human-gate.git"
+    "url": "git+https://github.com/mohakmalviya/voight.git"
   },
   "bugs": {
-    "url": "https://github.com/mohakmalviya/human-gate/issues"
+    "url": "https://github.com/mohakmalviya/voight/issues"
   },
-  "homepage": "https://github.com/mohakmalviya/human-gate#readme",
+  "homepage": "https://github.com/mohakmalviya/voight#readme",
   "keywords": [
     "anti-scraping",
     "bot-mitigation",
