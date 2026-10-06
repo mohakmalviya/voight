@@ -8,7 +8,7 @@ import { loadCloudRanges } from './sandbox.mjs';
 
 export async function loadAssets() {
   const assets = {};
-  for (const [file, type] of [['index.html', 'text/html; charset=utf-8'], ['style.css', 'text/css; charset=utf-8'], ['client.js', 'text/javascript; charset=utf-8'], ['challenge.js', 'text/javascript; charset=utf-8'], ['human.js', 'text/javascript; charset=utf-8'], ['hop.js', 'text/javascript; charset=utf-8']]) {
+  for (const [file, type] of [['index.html', 'text/html; charset=utf-8'], ['style.css', 'text/css; charset=utf-8'], ['client.js', 'text/javascript; charset=utf-8'], ['challenge.js', 'text/javascript; charset=utf-8'], ['human.js', 'text/javascript; charset=utf-8'], ['hop.js', 'text/javascript; charset=utf-8'], ['shared.js', 'text/javascript; charset=utf-8']]) {
     assets[`/_gate/${file}`] = { body: await readFile(new URL(`../dist/${file}`, import.meta.url)), type };
   }
   return assets;

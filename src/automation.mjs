@@ -86,6 +86,15 @@ export function pixelGridShare(points, dpr, [outer, inner] = []) {
 // sends repeated keydowns before the hold completes. A script that presses once and waits sends one.
 export const KEY_REPEAT_HOLD_MS = 1200;
 
+// A DevTools client that intercepts requests holds each one until it answers, cache hits included. patchright does this
+// on every page, as do Playwright and Puppeteer scripts that route requests. The check page fetches one cached byte 8
+// times in a row from the page and from a shared worker, which such a client does not reach, and reports the fastest of
+// 6 rounds for each. A person's Edge and Chrome: page 1.0 to 1.25 times the worker, also under load and with an
+// extension watching every request (it sees both), and up to 1.5 with DevTools open. patchright: 2.6 to 3.4 times, 0.65
+// ms or more per fetch. Measured on Windows only.
+export const INTERCEPTION_RATIO = 2;
+export const INTERCEPTION_MIN_MS = 0.3;
+
 // What the human-check page reports. Every field is client-controlled, so missing or malformed values count against it.
 // `returned` says whether this check's page came back from the hop page without loading again (null: not judged).
 export function humanReport(report, userAgent = '', { returned = null } = {}) {
@@ -129,6 +138,11 @@ export function humanReport(report, userAgent = '', { returned = null } = {}) {
   // DevTools protocol's touch emulation produces. Windows touchscreens report 5 or more touch points.
   const touchPoints = Number.isSafeInteger(value.env?.touch) ? value.env.touch : null;
   if (pointer === 'touch' && touchPoints !== null && ((windowsDesktop(userAgent) && touchPoints < 2) || (/Macintosh/.test(userAgent) && touchPoints === 0))) found.push('emulated_touch');
+  // [page ms, shared worker ms, fetches each], the fastest round of cached fetches from each side.
+  const fetches = Array.isArray(value.fetches) && value.fetches.length === 3 && value.fetches.every(n => Number.isFinite(n) && n >= 0)
+    && Number.isSafeInteger(value.fetches[2]) && value.fetches[2] >= 4 && value.fetches[1] > 0 ? value.fetches : null;
+  const held = fetches ? fetches[0] / fetches[1] : null;
+  if (held !== null && chromium && windowsDesktop(userAgent) && held >= INTERCEPTION_RATIO && (fetches[0] - fetches[1]) / fetches[2] >= INTERCEPTION_MIN_MS) found.push('request_interception');
   const repeats = Number.isSafeInteger(value.repeats) && value.repeats >= 0 ? value.repeats : 0;
   const unrepeated = pointer === 'keyboard' && windowsDesktop(userAgent) && holdMs >= KEY_REPEAT_HOLD_MS && repeats === 0;
   const gap = value.pressGap, final = path.at(-1);
@@ -146,7 +160,7 @@ export function humanReport(report, userAgent = '', { returned = null } = {}) {
     unrepeated,
     notes: [...found, ...(unrepeated ? ['no_key_repeat'] : []), `pointer:${pointer}`, `moves:${path.length ? path.length + 1 : 0}`,
       ...(input && pointer === 'mouse' ? [`predicted:${input[1]}/${input[0]}`] : []), ...(grid !== null && pointer === 'mouse' ? [`grid:${grid.toFixed(2)}`] : []), ...(pointer === 'keyboard' ? [`repeats:${repeats}`] : []),
-      ...(devtools === null ? [] : [`devtools:${devtools.toFixed(2)}`]), ...(worker === null ? [] : [`worker:${worker.toFixed(2)}`])],
+      ...(devtools === null ? [] : [`devtools:${devtools.toFixed(2)}`]), ...(worker === null ? [] : [`worker:${worker.toFixed(2)}`]), ...(held === null ? [] : [`fetches:${held.toFixed(2)}`])],
   };
 }
 

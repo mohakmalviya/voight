@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createHash, randomBytes } from 'node:crypto';
 import http from 'node:http';
+import { readFileSync } from 'node:fs';
 import { createFixture } from './fixture.mjs';
 import { leadingZeroBits } from '../src/gateway.mjs';
 import { humanReport, headerAnomaly, unbrandedChromium, backForwardRequired } from '../src/automation.mjs';
@@ -204,6 +205,31 @@ test('scripted input on Windows is caught: unpredicted moves, emulated touch and
     const response = await check(f, { headers: visitor(`203.0.113.${210 + index}`, { 'user-agent': edge }), signals });
     assert.equal(response.status, 200, await response.clone().text());
   }
+});
+
+test('requests held by a DevTools client are caught: cached fetches from the page cost far more than from a shared worker', async t => {
+  const edge = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/141.0.0.0 Safari/537.36 Edg/141.0.0.0';
+  const mac = 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/141.0.0.0 Safari/537.36';
+  // Measured [page ms, shared worker ms, fetches]: Edge, Chrome, an extension watching requests, load, DevTools open.
+  for (const fetches of [[5.2, 4.8, 10], [4.9, 4, 10], [11, 10, 10], [7.2, 6.2, 10], [8.3, 5.6, 10], [0.9, 0.3, 8]]) {
+    assert.equal(humanReport({ ...HUMAN, fetches }, edge).automated, false, String(fetches));
+  }
+  // patchright, which intercepts every request: 2.6 to 3.4 times, and at least 0.65 ms more per fetch.
+  assert.deepEqual(humanReport({ ...HUMAN, fetches: [10.6, 4, 10] }, edge).notes, ['request_interception', 'pointer:mouse', 'moves:9', 'fetches:2.65']);
+  assert.equal(humanReport({ ...HUMAN, fetches: [19.2, 5.7, 8] }, edge).automated, true);
+  assert.equal(humanReport({ ...HUMAN, fetches: [10.6, 4, 10] }, mac).automated, false); // Not measured off Windows.
+  for (const fetches of [[10.6, 0, 10], [10.6, 4], [10.6, 4, 2], [10.6, 4, 7.5], ['10.6', 4, 10], null]) {
+    assert.equal(humanReport({ ...HUMAN, fetches }, edge).automated, false, JSON.stringify(fetches));
+  }
+  const f = await fixture(t);
+  // The byte the page times stays in the browser's cache; the shared worker that times it from outside the page.
+  const cached = await f.request('/_gate/human/cached?123456', { headers: visitor() });
+  assert.equal(cached.status, 200); assert.equal(cached.headers.get('cache-control'), 'private, max-age=600'); assert.equal(await cached.text(), '1');
+  assert.match(readFileSync(new URL('../web/shared.js', import.meta.url), 'utf8'), /onconnect[\s\S]*transferSize === 0/);
+  const response = await check(f, { headers: visitor('203.0.113.220', { 'user-agent': edge }), signals: { fetches: [10.6, 4, 10] } });
+  assert.equal(response.status, 403); assert.equal(await errorOf(response), 'automation_detected');
+  const passed = await check(f, { headers: visitor('203.0.113.221', { 'user-agent': edge }), signals: { fetches: [5.2, 4.8, 10] } });
+  assert.equal(passed.status, 200, await passed.clone().text());
 });
 
 test('each check gets its own scrambled script, and only that script can seal a report the server accepts', async t => {

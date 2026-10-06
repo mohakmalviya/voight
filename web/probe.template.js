@@ -4,7 +4,7 @@
 // name, and a rewritten report fails its checksum. It does not make forgery impossible, only specific to each check.
 const $_g = globalThis;
 const $_doc = $_g[$S('document')], $_nav = $_g[$S('navigator')], $_con = $_g[$S('console')], $_perf = $_g[$S('performance')];
-const $_debug = $_con[$S('debug')], $_clear = $_con[$S('clear')], $_nowFn = $_perf[$S('now')];
+const $_debug = $_con[$S('debug')], $_clear = $_con[$S('clear')], $_nowFn = $_perf[$S('now')], $_fetch = $_g[$S('fetch')];
 const $_now = () => $_nowFn[$S('call')]($_perf);
 
 // A fresh frame lends a second realm: its Error objects slip past hooks that test `instanceof Error`, and its
@@ -51,9 +51,9 @@ $_g[$S('addEventListener')]($S('pointermove'), $_event => {
 }, { capture: true, passive: true });
 
 // Replaced console or timer functions, swapped after this script loaded or rewritten to look native.
-const $_hooked = () => $_con[$S('debug')] !== $_debug || $_perf[$S('now')] !== $_nowFn
+const $_hooked = () => $_con[$S('debug')] !== $_debug || $_perf[$S('now')] !== $_nowFn || $_g[$S('fetch')] !== $_fetch
   || ($_predict && $_pointerProto[$S('getPredictedEvents')] !== $_predict)
-  || ![$_debug, $_clear, $_nowFn, $_g[$S('Function')][$S('prototype')][$S('toString')], ...($_predict ? [$_predict] : [])].every($_native);
+  || ![$_debug, $_clear, $_nowFn, $_fetch, $_g[$S('Function')][$S('prototype')][$S('toString')], ...($_predict ? [$_predict] : [])].every($_native);
 
 const $_globals = () => [$S('__playwright__binding__'), $S('__pwInitScripts'), $S('_selenium'), $S('callSelenium'), $S('__webdriver_evaluate'),
   $S('__selenium_evaluate'), $S('__nightmare'), $S('domAutomation'), $S('domAutomationController'), $S('callPhantom'), $S('_phantom')].some($_name => $_name in $_g)
@@ -141,19 +141,46 @@ const $_workerTiming = () => new Promise($_resolve => {
   } catch { $_resolve(null); }
 });
 
+// A DevTools client that intercepts requests (patchright always does; Playwright and Puppeteer when a script routes
+// them) holds every request from the page until it answers, cache hits included. Shared workers are outside its reach,
+// and extensions that watch requests see both alike. So: the same cached byte, fetched 8 times in a row from the page
+// and from a shared worker (web/shared.js), 6 rounds, fastest of each (see INTERCEPTION_RATIO on the server).
+async function $_fetchTiming() {
+  const $_Shared = $_g[$S('SharedWorker')];
+  if (!$_Shared || !$_nav[$S('userAgentData')]) return null;
+  const $_url = new URL($S('/_gate/human/cached?') + $N(100000, 999999), $_g[$S('location')][$S('href')])[$S('href')];
+  const $_one = async () => { await (await $_fetch[$S('call')]($_g, $_url, { [$S('cache')]: $S('force-cache') }))[$S('arrayBuffer')](); };
+  const $_cached = $_count => $_perf[$S('getEntriesByName')]($_url).slice(-$_count).every($_entry => $_entry[$S('transferSize')] === 0);
+  await $_one(); await $_one();
+  if (!$_cached(1)) return null; // The cache is off (an open DevTools can do that): nothing to compare.
+  const $_port = new $_Shared($S('/_gate/shared.js'))[$S('port')];
+  const $_ask = $_count => new Promise($_resolve => { $_port[$S('onmessage')] = $_event => $_resolve($_event.data); $_port[$S('postMessage')]([$_url, $_count]); setTimeout(() => $_resolve(null), 3000); });
+  try {
+    if (typeof await $_ask(1) !== 'number') return null;
+    const $_page = [], $_shared = [];
+    for (let $_round = 0; $_round < 6; $_round++) {
+      const $_start = $_now(); for (let $_i = 0; $_i < 8; $_i++) await $_one(); $_page.push($_now() - $_start);
+      const $_took = await $_ask(8); if (typeof $_took !== 'number') return null; $_shared.push($_took);
+    }
+    return $_cached(8) ? [+Math.min(...$_page).toFixed(2), +Math.min(...$_shared).toFixed(2), 8] : null;
+  } finally { $_port[$S('close')](); }
+}
+
 // Starts measuring the machine at once (voices take a moment). `seal` adds the gesture and the final checks.
 export default function $_start() {
   const $_machine = $_environment().catch(() => ({}));
   const $_worker = $_nav[$S('userAgentData')] ? $_workerTiming() : Promise.resolve(null);
+  // After the rest, so nothing else competes with the timing.
+  const $_fetches = Promise.all([$_machine, $_worker]).then($_fetchTiming).catch(() => null);
   return {
     async seal($_gesture) {
-      const [$_env, $_workerReport] = await Promise.all([$_machine, $_worker]);
+      const [$_env, $_workerReport, $_fetched] = await Promise.all([$_machine, $_worker, $_fetches]);
       let $_ratio = null, $_touch = null; try { if ($_nav[$S('userAgentData')]) $_touch = $_touched($_realm[$S('Error')]); $_ratio = $_inspector(); } catch {}
       const $_brands = $_nav[$S('userAgentData')]?.[$S('brands')]?.map($_entry => $_entry.brand).join('|') ?? '';
       return $_seal({ ...$_gesture,
         [$S('webdriver')]: $_nav[$S('webdriver')] === true, [$S('automationGlobals')]: $_globals(), [$S('hooked')]: $_hooked(), [$S('devtools')]: $_ratio, [$S('worker')]: $_workerReport, [$S('touched')]: $_touch,
         [$S('frame')]: [$_g.outerWidth - $_g.innerWidth, $_g.outerHeight - $_g.innerHeight], [$S('plugins')]: $_nav[$S('plugins')]?.length ?? -1,
-        [$S('brands')]: $_brands, [$S('engine')]: $_engine(), [$S('input')]: [...$_input], [$S('points')]: [...$_points], [$S('dpr')]: $_g[$S('devicePixelRatio')], [$S('heights')]: [$_g.outerHeight, $_g.innerHeight], [$S('env')]: $_env });
+        [$S('brands')]: $_brands, [$S('engine')]: $_engine(), [$S('input')]: [...$_input], [$S('points')]: [...$_points], [$S('dpr')]: $_g[$S('devicePixelRatio')], [$S('heights')]: [$_g.outerHeight, $_g.innerHeight], [$S('fetches')]: $_fetched, [$S('env')]: $_env });
     },
   };
 }

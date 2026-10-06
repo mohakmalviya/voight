@@ -177,6 +177,11 @@ export function createGateway({ config, store, assets, auth = webauthn(config), 
           res.setHeader('cache-control', 'no-store');
           outcome = 'human_probe'; return send(res, 200, pending.probe.workerSource, 'text/javascript; charset=utf-8');
         }
+        // One byte the check page keeps in the browser's cache and fetches again from the page and from a shared worker.
+        if (req.method === 'GET' && isPublic && config.humanCheck !== 'off' && url.pathname === `${PREFIX}human/cached`) {
+          res.setHeader('cache-control', 'private, max-age=600');
+          outcome = 'human_cached'; return send(res, 200, '1', 'text/plain; charset=utf-8');
+        }
         // The human check page steps here and straight back. Firefox returns to the page it left; a browser without a
         // back/forward cache loads it again, which the record and cookie let the gateway see.
         if (req.method === 'GET' && isPublic && config.humanCheck !== 'off' && url.pathname === `${PREFIX}human/hop`) {
