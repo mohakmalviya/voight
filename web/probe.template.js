@@ -15,6 +15,16 @@ $_doc[$S('documentElement')][$S('appendChild')]($_frame);
 const $_realm = $_frame[$S('contentWindow')];
 const $_source = $_realm[$S('Function')][$S('prototype')][$S('toString')];
 const $_native = $_fn => { try { return $_source[$S('call')]($_fn)[$S('includes')]($S('[native code]')); } catch { return false; } };
+// How many of 240 quick history changes in that new frame took effect (HISTORY_CHANGES on the server). Chromium lets a
+// frame make 200 in 10 seconds unless it was launched with --disable-ipc-flooding-protection, as automation tools do.
+const $_historyChanges = (() => {
+  try {
+    const $_history = $_realm[$S('history')], $_replace = $_history[$S('replaceState')];
+    for (let $_i = 0; $_i < 240; $_i++) $_replace[$S('call')]($_history, { [$S('n')]: $_i }, '');
+    const $_state = $_history[$S('state')];
+    return $_state && Number.isInteger($_state[$S('n')]) ? $_state[$S('n')] + 1 : null;
+  } catch { return null; } // Safari throws past its own limit.
+})();
 
 // Logging Errors costs several times what logging numbers does when a DevTools client is attached (see DEVTOOLS_RATIO).
 function $_inspector() {
@@ -195,7 +205,7 @@ export default function $_start() {
         [$S('webdriver')]: $_nav[$S('webdriver')] === true, [$S('automationGlobals')]: $_globals(), [$S('hooked')]: $_hooked(), [$S('devtools')]: $_ratio, [$S('worker')]: $_workerReport, [$S('touched')]: $_touch,
         [$S('frame')]: [$_g.outerWidth - $_g.innerWidth, $_g.outerHeight - $_g.innerHeight], [$S('plugins')]: $_nav[$S('plugins')]?.length ?? -1,
         [$S('brands')]: $_brands, [$S('engine')]: $_engine(), [$S('input')]: [...$_input], [$S('points')]: [...$_points], [$S('dpr')]: $_g[$S('devicePixelRatio')], [$S('heights')]: [$_g.outerHeight, $_g.innerHeight], [$S('fetches')]: $_fetched,
-        [$S('lags')]: [...$_lags], [$S('clock')]: $_clockStep(), [$S('env')]: $_env });
+        [$S('lags')]: [...$_lags], [$S('clock')]: $_clockStep(), [$S('history')]: $_historyChanges, [$S('env')]: $_env });
     },
   };
 }
