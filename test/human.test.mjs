@@ -620,6 +620,29 @@ test('Firefox moves made through Juggler are caught on Windows: they reach the p
   assert.equal(passed.status, 200, await passed.clone().text());
 });
 
+test('Chromium launched by automation tools is caught: it lifts the limit on history changes', async t => {
+  const chromium = { ...HUMAN, engine: 'chromium' };
+  // How many of the probe's 240 changes took effect: Edge and Chrome opened normally (also with a debugging port), 200.
+  for (const history of [200, 199, 0, null, undefined, -1, 240.5, '240']) {
+    assert.equal(humanReport({ ...chromium, history }, WINDOWS).automated, false, String(history));
+  }
+  // Playwright on installed Edge or Chrome, headed or headless: all 240.
+  assert.deepEqual(humanReport({ ...chromium, history: 240 }, WINDOWS).notes, ['no_navigation_limit', 'pointer:mouse', 'moves:9', 'history:240']);
+  assert.equal(humanReport({ ...chromium, history: 240, pointer: 'keyboard', repeats: 30 }, WINDOWS).automated, true); // Any input.
+  const mac = 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/141.0.0.0 Safari/537.36';
+  assert.equal(humanReport({ ...chromium, history: 240 }, mac).automated, true); // Not a Windows measurement.
+  // Chromium claiming to be Firefox is judged; Firefox stops at 199 by itself and is not.
+  assert.equal(humanReport({ ...chromium, brands: '', history: 240 }, FIREFOX).automated, true);
+  assert.equal(humanReport({ ...HUMAN, brands: '', engine: 'gecko', history: 199 }, FIREFOX).notes.some(note => note.startsWith('history:')), false);
+
+  const f = await fixture(t);
+  const refused = await check(f, { headers: visitor('203.0.113.230', { 'user-agent': WINDOWS }), signals: { engine: 'chromium', history: 240 } });
+  assert.equal(await errorOf(refused), 'automation_detected');
+  assert.ok(f.audit.at(-1).automationSignals.includes('no_navigation_limit'));
+  const passed = await check(f, { headers: visitor('198.51.100.231', { 'user-agent': WINDOWS }), signals: { engine: 'chromium', history: 200 } });
+  assert.equal(passed.status, 200, await passed.clone().text());
+});
+
 test('the hop page takes only the check page’s own step', async t => {
   const f = await fixture(t);
   const firefox = visitor('203.0.113.70', { 'user-agent': FIREFOX });

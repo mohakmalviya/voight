@@ -109,6 +109,15 @@ export function lagSpread(lags) {
   return sorted[Math.floor(sorted.length * 3 / 4)] - sorted[Math.floor(sorted.length / 4)];
 }
 
+// Chromium lets a frame change its history 200 times in 10 seconds and ignores the rest (its IPC flooding protection),
+// and the probe makes 240 changes in a new frame. Playwright, Puppeteer, chrome-launcher and tools built on them
+// (browser-use, Stagehand, SeleniumBase, Cypress, Crawlee, rebrowser) start the browser with
+// --disable-ipc-flooding-protection, and then all 240 go through; patchright, nodriver and ChromeDriver leave it out.
+// Edge 154 and Chrome 154 opened normally, also with a remote debugging port: 200. Playwright on either, headed or
+// headless: 240; the same with that one switch removed: 200. Firefox stops at 199 and Safari throws, so only a
+// Chromium page is judged.
+export const HISTORY_CHANGES = 240;
+
 // What the human-check page reports. Every field is client-controlled, so missing or malformed values count against it.
 // `returned` says whether this check's page came back from the hop page without loading again (null: not judged).
 export function humanReport(report, userAgent = '', { returned = null } = {}) {
@@ -163,6 +172,9 @@ export function humanReport(report, userAgent = '', { returned = null } = {}) {
   const gecko = value.engine === 'gecko' || (/Firefox\//.test(userAgent) && value.engine !== 'chromium');
   const spread = gecko && clock !== null && clock > 0 && clock <= 1.5 && lags.length >= EVENT_TIME_MIN_MOVES ? lagSpread(lags) : null;
   if (spread !== null && pointer === 'mouse' && windowsDesktop(userAgent) && spread <= EVENT_TIME_MAX_SPREAD_MS) found.push('synthetic_event_time');
+  // How many of the probe's history changes took effect.
+  const history = Number.isSafeInteger(value.history) && value.history >= 0 ? value.history : null;
+  if (history !== null && chromium && history >= HISTORY_CHANGES) found.push('no_navigation_limit');
   const repeats = Number.isSafeInteger(value.repeats) && value.repeats >= 0 ? value.repeats : 0;
   const unrepeated = pointer === 'keyboard' && windowsDesktop(userAgent) && holdMs >= KEY_REPEAT_HOLD_MS && repeats === 0;
   const gap = value.pressGap, final = path.at(-1);
@@ -181,7 +193,7 @@ export function humanReport(report, userAgent = '', { returned = null } = {}) {
     notes: [...found, ...(unrepeated ? ['no_key_repeat'] : []), `pointer:${pointer}`, `moves:${path.length ? path.length + 1 : 0}`,
       ...(input && pointer === 'mouse' ? [`predicted:${input[1]}/${input[0]}`] : []), ...(grid !== null && pointer === 'mouse' ? [`grid:${grid.toFixed(2)}`] : []), ...(pointer === 'keyboard' ? [`repeats:${repeats}`] : []),
       ...(devtools === null ? [] : [`devtools:${devtools.toFixed(2)}`]), ...(worker === null ? [] : [`worker:${worker.toFixed(2)}`]), ...(held === null ? [] : [`fetches:${held.toFixed(2)}`]),
-      ...(spread !== null && pointer === 'mouse' ? [`lag-spread:${+spread.toFixed(1)}/${lags.length}`] : [])],
+      ...(spread !== null && pointer === 'mouse' ? [`lag-spread:${+spread.toFixed(1)}/${lags.length}`] : []), ...(history !== null && chromium ? [`history:${history}`] : [])],
   };
 }
 

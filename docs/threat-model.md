@@ -44,7 +44,7 @@ Field test (Windows laptop): installed Edge read 20 pages a minute with no check
 
 With `HUMAN_CHECK=always`, or once there is a reason, a request without a valid pass gets the check page (HTML) or `403 human_check_required` (anything else). The page asks the server for a challenge, then the visitor holds the button for 1.5 seconds. The verify request reports the webdriver flag, known automation-tool globals, window frame size, plugin count, user-agent brands, whether the gesture was a trusted event, how long it was held, and the last 64 pointer steps. The server rejects:
 
-- `automation_detected`: webdriver set, automation globals present, headless Chrome (a `HeadlessChrome` brand or user agent, or desktop Chrome with no window frame and no plugins), a mouse path in which one exact step of 2px or more occurs at least 10 times and makes up half or more of such steps, a DevTools-protocol client attached (`devtools_protocol`, below), desktop Firefox whose check page did not come back from the back/forward cache (`no_back_forward_cache` and `back_forward_reload`, below), or, on Windows, a Chromium mouse path whose moves almost never carried pointer predictions (`no_predicted_input`) or mostly fell between physical pixels (`off_grid_pointer`), cached requests from the page held far longer than the same requests from a shared worker (`request_interception`), or a touch hold on a PC without a multi-touch screen or on a Mac (`emulated_touch`, both below), or a Firefox mouse path whose moves reached the page as soon as they were stamped (`synthetic_event_time`, below);
+- `automation_detected`: webdriver set, automation globals present, headless Chrome (a `HeadlessChrome` brand or user agent, or desktop Chrome with no window frame and no plugins), a mouse path in which one exact step of 2px or more occurs at least 10 times and makes up half or more of such steps, a DevTools-protocol client attached (`devtools_protocol`, below), desktop Firefox whose check page did not come back from the back/forward cache (`no_back_forward_cache` and `back_forward_reload`, below), or, on Windows, a Chromium mouse path whose moves almost never carried pointer predictions (`no_predicted_input`) or mostly fell between physical pixels (`off_grid_pointer`), cached requests from the page held far longer than the same requests from a shared worker (`request_interception`), or a touch hold on a PC without a multi-touch screen or on a Mac (`emulated_touch`, both below), or a Firefox mouse path whose moves reached the page as soon as they were stamped (`synthetic_event_time`, below), or Chromium that lets a frame change its history more than 200 times in 10 seconds (`no_navigation_limit`, below);
 - `human_check_failed`: an untrusted gesture, a hold shorter than 1.5 s by the page's clock *or* the server's, or a mouse that reached the button without moving, arrived in a final leap of more than 80px, or pressed more than 3px from where it last moved (how agent click tools behave), or, on Windows, a held Space or Enter that never repeated (`no_key_repeat`, below);
 - `invalid_solution`: the small proof of work that rides along is wrong.
 
@@ -117,6 +117,28 @@ Field measurements (Windows 11 laptop, 125% scaling):
 
 Key holds are not timed this way: a physical keyboard's repeat comes from a driver timer that may run on the clock tick, which would make a person's held key look scripted, so a script that sends repeated `keydown`s passes the keyboard path in Firefox unless something else stops it. Not measured: Firefox on Mac and Linux, pen and touch input, Firefox ESR.
 
+### Launch switches in Chromium
+
+Automation libraries start Chrome and Edge with a long list of switches, and one of them changes something a page can see. Chromium lets a frame change its history (`history.pushState` and `replaceState`, or the location) 200 times in 10 seconds and silently ignores the rest, which keeps a page from flooding the browser process (Chromium's "IPC flooding protection"). `--disable-ipc-flooding-protection` turns that off. The check's script makes 240 history changes in its own blank frame as it loads (a few milliseconds, nothing the visitor sees, and the page's own history is untouched) and reports how many took effect (`history:<n>` in the log). All 240 fails the check (`no_navigation_limit`). Judged for Chromium by engine or user agent; Firefox keeps its own limit and Safari throws, and neither is judged.
+
+| Browser | History changes that took effect, of 240 |
+| --- | --- |
+| Edge 154 and Chrome 154 opened normally, fresh profiles | 200 |
+| Edge opened with `--remote-debugging-port` (how nodriver-style tools start it) | 200 |
+| Playwright attached over `connectOverCDP` to an Edge window opened normally | 200 (caught by the DevTools timing instead) |
+| Playwright on installed Edge or Chrome, headed or headless | 240: refused, also through the real check script |
+| The same with only `--disable-ipc-flooding-protection` removed (`ignoreDefaultArgs`) | 200 |
+| Edge opened by hand with `--disable-ipc-flooding-protection` | 240 |
+| Firefox 157 | 199 |
+
+Which tools pass the switch by default, from their source code (October 2026; the tools themselves were not run, only Playwright was):
+
+| Passes it (refused as they come) | Leaves it out (not caught by this) |
+| --- | --- |
+| Playwright, Puppeteer, rebrowser-patches, chrome-launcher (Lighthouse), Stagehand, browser-use, SeleniumBase (UC and CDP mode), Cypress, Crawlee | patchright (removes it), ChromeDriver with Selenium, WebdriverIO or undetected-chromedriver, nodriver, zendriver, pydoll, DrissionPage, Botasaurus |
+
+Of the first column, browser-use's own session, SeleniumBase's CDP mode and rebrowser do not enable the DevTools `Runtime` domain, so the DevTools timing alone would not have caught them. This only reads how the browser was started: any of these tools can be told to leave the switch out, and a kiosk or test machine set up with it by hand is refused. A Chromium release old enough not to have the limit would be refused too.
+
 ### Scripted input and held requests in Chromium (patchright)
 
 patchright is a Playwright fork that never enables the `Runtime` domain, so the DevTools timing reads like a person's (1.17–1.33), and driving installed Edge it shows the same machine as a person's Edge: every property the check page and a wider lab page read (voices, plugins, permissions, client hints, GPU, storage quota, media devices) matched a fresh Edge profile opened by hand. Its mouse, keyboard and touch events are trusted. Worker start-up time and the cost of logged security violations (patchright still enables the `Log` domain) were the same too. What is left is how the input arrives, and that patchright holds every request the page makes.
@@ -185,7 +207,8 @@ A pass is a random token, stored hashed, valid for `HUMAN_PASS_SECONDS` (six hou
 | Self-declared AI crawler or assistant (GPTBot, ChatGPT-User, ClaudeBot, Claude-User, PerplexityBot, …) | Refused on every request except `robots.txt` |
 | Signed agent (Web Bot Auth: `Signature-Agent`, e.g. ChatGPT agent) | Refused. The signature is not verified because a forged header only shuts out its sender |
 | AI app browser that names itself (e.g. `Claude/2.x` in the user agent) | Refused |
-| Plain Playwright / Puppeteer / Selenium | Webdriver flag, headless traces, straight-line pointer steps, DevTools client |
+| Plain Playwright / Puppeteer / Selenium | Webdriver flag, headless traces, straight-line pointer steps, DevTools client; Playwright and Puppeteer also by their launch switch (`no_navigation_limit`) |
+| AI browser agents and stealth tools started as they come: browser-use, Stagehand, SeleniumBase UC or CDP mode, rebrowser, Crawlee | Refused by the launch switch (`no_navigation_limit`; switch read from their source, mechanism field-tested with Playwright), plus whatever else each one trips |
 | Playwright with the webdriver flag hidden, headless | Headless brand, missing frame and plugins, straight-line pointer steps, DevTools client |
 | Headed Playwright with the flag hidden | DevTools client; straight-line pointer steps; unbranded Chromium on Windows or Mac |
 | Playwright driving installed Chrome or Edge, faked human path | DevTools client (field-tested) |
@@ -194,7 +217,8 @@ A pass is a random token, stored hashed, valid for `HUMAN_PASS_SECONDS` (six hou
 | patchright or a similar fork driving installed Chrome or Edge with a faked human path, a pause per step | Refused on Windows: its moves carry no pointer predictions (`no_predicted_input`, field-tested; got in before 0.9.2) |
 | The same fork sending its path without pauses | Refused on Windows: the points fall between physical pixels (`off_grid_pointer`, field-tested; got in before 0.9.2) |
 | The same fork rounding every point to a whole physical pixel, without pauses | Refused: patchright holds every request, and cached fetches from the page take 2.5 to 3 times as long as from a shared worker (`request_interception`, field-tested; got in before that rule) |
-| The same fork edited not to intercept requests, rounding to whole pixels, without pauses | **Gets through** (field-tested). Budgets, re-checks and blocks still apply |
+| The same fork edited not to intercept requests, rounding to whole pixels, without pauses | **Gets through** (field-tested; patchright leaves out the launch switch above). Budgets, re-checks and blocks still apply |
+| A tool or script that starts Chrome or Edge with a debugging port and drives it without enabling `Runtime` (nodriver, zendriver, pydoll, DrissionPage, Botasaurus, hand-written CDP), or any tool above told to leave the switch out, with a human-like path rounded to whole pixels, no pauses and no request interception | **Expected to get through**, like the edited fork (not field-tested with these tools) |
 | Playwright or Puppeteer routing requests (`page.route`, `setRequestInterception`) | Expected to fail `request_interception` as well (not field-tested); both are also caught by the DevTools timing as they come |
 | The same fork holding Space, or holding with emulated touch | Fails on Windows: no key repeat; touch on a PC without a touchscreen (field-tested) |
 | Stock Playwright, webdriver flag hidden, `console.debug` replaced by an init script | Refused: `console_tampered` and `devtools_protocol` from the worker (field-tested) |
