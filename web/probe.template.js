@@ -123,8 +123,10 @@ const $_voices = () => new Promise($_resolve => {
   if (!$_speech) return $_resolve(-1);
   const $_local = () => $_speech[$S('getVoices')]().filter($_v => $_v.localService).length;
   if ($_local()) return $_resolve($_local());
-  $_speech.addEventListener('voiceschanged', () => $_resolve($_local()), { once: true });
-  setTimeout(() => $_resolve($_local()), 1200);
+  // Edge's first change lists only its online voices, with the local ones a moment later, so wait for those.
+  const $_changed = () => { if ($_local()) { $_speech.removeEventListener('voiceschanged', $_changed); $_resolve($_local()); } };
+  $_speech.addEventListener('voiceschanged', $_changed);
+  setTimeout(() => { $_speech.removeEventListener('voiceschanged', $_changed); $_resolve($_local()); }, 2500);
 });
 async function $_environment() {
   const $_settle = ($_promise, $_fallback) => $_promise.catch(() => $_fallback);
