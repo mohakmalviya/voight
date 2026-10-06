@@ -3,7 +3,7 @@ import { generateRegistrationOptions, verifyRegistrationResponse, generateAuthen
 export function webauthn(config) {
   return {
     registrationOptions: (userID, label) => generateRegistrationOptions({
-      rpName: 'Human Gate', rpID: config.rpID, userID: Buffer.from(userID, 'base64url'), userName: label,
+      rpName: 'Voight', rpID: config.rpID, userID: Buffer.from(userID, 'base64url'), userName: label,
       attestationType: 'none', authenticatorSelection: { residentKey: 'required', userVerification: 'required' },
     }),
     verifyRegistration: (response, challenge) => verifyRegistrationResponse({

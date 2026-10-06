@@ -26,7 +26,7 @@ const RETRY = '<button id="retry" class="button secondary" type="button">Reload 
 
 // Where a refused person can reach the operator (CONTACT): an email address, with the reference filled in, or a link.
 const contactLink = (contact, requestID) => contact.includes('@') && !contact.startsWith('https://')
-  ? `mailto:${contact}?subject=${encodeURIComponent(`Human Gate reference ${requestID}`)}` : contact;
+  ? `mailto:${contact}?subject=${encodeURIComponent(`Voight reference ${requestID}`)}` : contact;
 
 // One centred panel: the site it guards, a mark that shows the state, the message, the action, and a reference.
 // `meta` holds the guarded page's own link-preview tags (see preview.mjs). `trap` is a link inside a <template>, which
@@ -35,12 +35,12 @@ const contactLink = (contact, requestID) => contact.includes('@') && !contact.st
 function page({ title, intro, body = '', marks, tone, state, requestID, site, head = '', headingID = 'title', meta = [], trap = '', contact = '' }) {
   const previews = meta.map(([attribute, key, content]) => `<meta ${attribute}="${escape(key)}" content="${escape(content)}">`).join('');
   return '<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">'
-    + `<meta name="color-scheme" content="light dark"><meta name="robots" content="noindex">${previews}<title>${title} · Human Gate</title><link rel="stylesheet" href="/_gate/style.css">${head}</head>`
+    + `<meta name="color-scheme" content="light dark"><meta name="robots" content="noindex">${previews}<title>${title} · Voight</title><link rel="stylesheet" href="/_gate/style.css">${head}</head>`
     + '<body class="gate"><main class="stage">'
     + (site ? `<div class="site">${icon('lock')}<span>${escape(site)}</span></div>` : '')
     + `<section class="panel" data-tone="${tone}"${state ? ` data-state="${state}"` : ''} aria-labelledby="${headingID}">`
     + `<div class="mark">${marks}</div><h1 id="${headingID}">${title}</h1><p class="lede">${intro}</p>${body}</section>`
-    + `<footer class="meta"><span>Reference <code>${escape(requestID)}</code></span>${contact ? `<a href="${escape(contactLink(contact, requestID))}">Contact the operator</a>` : ''}<span>Protected by Human Gate</span></footer>`
+    + `<footer class="meta"><span>Reference <code>${escape(requestID)}</code></span>${contact ? `<a href="${escape(contactLink(contact, requestID))}">Contact the operator</a>` : ''}<span>Protected by Voight</span></footer>`
     + (trap ? `<template><a href="${escape(trap)}">Text-only version of this page</a></template>` : '')
     + '</main></body></html>';
 }

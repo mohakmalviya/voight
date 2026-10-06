@@ -105,7 +105,7 @@ document.querySelector('#retry').addEventListener('click', () => location.reload
 // when the hop page goes back. Camoufox and Playwright's Firefox switch that cache off, so they load the page again,
 // which the gateway refuses. Resolves to the hop's id once this page has come back (undefined: not made or not back).
 const here = location.pathname + location.search;
-const HOPPED = 'human-gate-hop';
+const HOPPED = 'voight-hop';
 function roundTrip() {
   const gecko = typeof navigator.buildID === 'string' || 'MozAppearance' in document.documentElement.style;
   if (!gecko || (/Android/.test(navigator.userAgent) && navigator.maxTouchPoints > 0)) return Promise.resolve(undefined);

@@ -13,7 +13,7 @@ labels: bug
 **How to reproduce** (against `npm run demo` if possible)
 
 **Environment**
-- Human Gate version / commit:
+- Voight version / commit:
 - Node.js version:
 - `MODE` and any non-default settings:
 - Reverse proxy / CDN in front, and `TRUSTED_PROXIES`:

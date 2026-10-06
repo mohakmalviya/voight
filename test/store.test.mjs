@@ -78,7 +78,7 @@ test('separate credentials have separate extraction budgets', () => {
 });
 
 test('existing credential databases upgrade additively and usage survives reopen across connections', () => {
-  const directory = mkdtempSync(join(tmpdir(), 'human-gate-store-'));
+  const directory = mkdtempSync(join(tmpdir(), 'voight-store-'));
   const path = join(directory, 'gate.sqlite');
   const legacy = new DatabaseSync(path);
   legacy.exec(`CREATE TABLE credentials (id TEXT PRIMARY KEY, user_id TEXT NOT NULL, label TEXT NOT NULL, key TEXT NOT NULL, counter INTEGER NOT NULL, transports TEXT NOT NULL, revoked INTEGER NOT NULL DEFAULT 0);

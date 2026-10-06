@@ -27,7 +27,7 @@ try {
     const f = await createFixture({ automationPolicy: scenario.mode, resourcesPerWindow: 3 }, (_, res) => { res.setHeader('content-type', 'text/html; charset=utf-8'); res.end(originBody); }, assets);
     const context = await browser.newContext({ viewport: { width: 1280, height: 900 }, ...(scenario.normalUA ? { userAgent: `Mozilla/5.0 Chrome/${browser.version()} Safari/537.36` } : {}) });
     try {
-      // Test instrumentation only; never injected by Human Gate or applied to third-party sites.
+      // Test instrumentation only; never injected by Voight or applied to third-party sites.
       if (scenario.masked) await context.addInitScript(() => Object.defineProperty(Navigator.prototype, 'webdriver', { get: () => false }));
       await context.route('**/*', route => new URL(route.request().url()).origin === f.config.origin ? route.continue() : route.abort());
       const page = await context.newPage(); page.setDefaultTimeout(10000);

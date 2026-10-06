@@ -4,7 +4,7 @@ import { resolve, join } from 'node:path';
 import { pathToFileURL, fileURLToPath } from 'node:url';
 import { chromium } from './browser-runtime.mjs';
 
-const [input = 'dist/human-gate-demo.html', artifactDirectory = 'dist/showcase-artifacts'] = process.argv.slice(2);
+const [input = 'dist/voight-demo.html', artifactDirectory = 'dist/showcase-artifacts'] = process.argv.slice(2);
 const artifacts = resolve(artifactDirectory); await mkdir(artifacts, { recursive: true });
 const browser = await chromium.launch({ headless: true });
 try {
@@ -14,7 +14,7 @@ try {
   page.on('request', request => { if (/^https?:/.test(request.url())) network.push(request.url()); });
   await context.route(/^https?:/, route => route.abort());
   await page.goto(pathToFileURL(resolve(input)).href);
-  assert.equal(await page.title(), 'Human Gate — Access on your terms');
+  assert.equal(await page.title(), 'Voight — Access on your terms');
   assert.equal(await page.locator('#origin-count').textContent(), '0');
   await page.screenshot({ path: join(artifacts, 'showcase-desktop.png') });
   await page.waitForTimeout(1800);
@@ -30,15 +30,15 @@ try {
   assert.equal(await page.locator('#browser-panel').isVisible(), false);
   await page.waitForTimeout(1800);
   const downloadPromise = page.waitForEvent('download'); await page.locator('#download').click();
-  const download = await downloadPromise; await download.saveAs(join(artifacts, 'human-gate-evidence.json'));
-  const exported = JSON.parse(await readFile(join(artifacts, 'human-gate-evidence.json'), 'utf8'));
+  const download = await downloadPromise; await download.saveAs(join(artifacts, 'voight-evidence.json'));
+  const exported = JSON.parse(await readFile(join(artifacts, 'voight-evidence.json'), 'utf8'));
   assert.equal(exported.browser.scenarios.length, 4); assert.equal(exported.http.scenarios.length, 6);
   await page.locator('#extraction-tab').focus(); await page.keyboard.press('Home');
   assert.equal(await page.locator('#browser-tab').getAttribute('aria-selected'), 'true');
   await page.locator('[data-case="headless"]').click();
   await page.locator('#limits-title').scrollIntoViewIfNeeded(); await page.waitForTimeout(1800);
   assert.deepEqual(errors, []); assert.deepEqual(network, []);
-  await context.close(); await video.saveAs(join(artifacts, 'human-gate-walkthrough.webm')); await video.delete();
+  await context.close(); await video.saveAs(join(artifacts, 'voight-walkthrough.webm')); await video.delete();
   const mobile = await browser.newContext({ viewport: { width: 390, height: 844 }, isMobile: true, deviceScaleFactor: 1 });
   const phone = await mobile.newPage(); await phone.goto(pathToFileURL(resolve(input)).href);
   assert.equal(await phone.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth), true);

@@ -46,7 +46,7 @@ test('anonymous visitors read the site without any login, and the site keeps its
   assert.equal(response.headers.get('cache-control'), 'private, max-age=600');
   assert.equal(response.headers.get('x-robots-tag'), null);
   assert.equal(response.headers.get('set-cookie'), null);
-  assert.equal(f.lastHeaders()['x-human-gate-user'], undefined);
+  assert.equal(f.lastHeaders()['x-voight-user'], undefined);
   assert.equal(f.lastHeaders()['accept-language'], 'hi-IN');
 });
 

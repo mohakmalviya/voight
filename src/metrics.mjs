@@ -15,14 +15,14 @@ export function createMetrics() {
       }
     },
     render() {
-      const lines = ['# HELP human_gate_requests_total Requests by response status and decision reason.', '# TYPE human_gate_requests_total counter'];
+      const lines = ['# HELP voight_requests_total Requests by response status and decision reason.', '# TYPE voight_requests_total counter'];
       for (const [key, count] of [...requests].sort()) {
         const [status, reason] = key.split('|');
-        lines.push(`human_gate_requests_total{status="${status}",reason="${reason.replace(/[^a-z0-9_]/gi, '_')}"} ${count}`);
+        lines.push(`voight_requests_total{status="${status}",reason="${reason.replace(/[^a-z0-9_]/gi, '_')}"} ${count}`);
       }
-      lines.push('# HELP human_gate_signals_total Requests on which each automation or sandbox signal was noted.', '# TYPE human_gate_signals_total counter');
-      for (const [signal, count] of [...signals].sort()) lines.push(`human_gate_signals_total{signal="${signal}"} ${count}`);
-      lines.push('# HELP human_gate_charged_bytes_total Decoded response bytes charged to budgets.', '# TYPE human_gate_charged_bytes_total counter', `human_gate_charged_bytes_total ${bytes.total}`);
+      lines.push('# HELP voight_signals_total Requests on which each automation or sandbox signal was noted.', '# TYPE voight_signals_total counter');
+      for (const [signal, count] of [...signals].sort()) lines.push(`voight_signals_total{signal="${signal}"} ${count}`);
+      lines.push('# HELP voight_charged_bytes_total Decoded response bytes charged to budgets.', '# TYPE voight_charged_bytes_total counter', `voight_charged_bytes_total ${bytes.total}`);
       return `${lines.join('\n')}\n`;
     },
   };

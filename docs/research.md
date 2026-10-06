@@ -1,6 +1,6 @@
 # Research and improvement priorities
 
-Reviewed 5 October 2026. Primary sources inform the design; their vendors' claims and research results are not Human Gate's measured results.
+Reviewed 5 October 2026. Primary sources inform the design; their vendors' claims and research results are not Voight's measured results.
 
 ## Findings and decisions
 

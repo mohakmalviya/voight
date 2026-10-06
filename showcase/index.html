@@ -2,12 +2,12 @@
 <html lang="en">
 <head>
   <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-  <meta name="description" content="Human Gate: a self-hosted access gateway with passkeys, optional automation checks, and measurable extraction limits. Explore recorded test results.">
-  <title>Human Gate — Access on your terms</title>
+  <meta name="description" content="Voight: a self-hosted access gateway with passkeys, optional automation checks, and measurable extraction limits. Explore recorded test results.">
+  <title>Voight — Access on your terms</title>
   <style>/* SHOWCASE_CSS */</style>
 </head>
 <body>
-  <header class="top"><a class="brand" href="#"><span class="mark" aria-hidden="true">H</span> Human Gate</a><nav aria-label="Main navigation"><a href="#design">The approach</a><a href="#evidence">Test the claims</a><a class="nav-cta" href="#try">Try locally <span aria-hidden="true">↗</span></a></nav></header>
+  <header class="top"><a class="brand" href="#"><span class="mark" aria-hidden="true">V</span> Voight</a><nav aria-label="Main navigation"><a href="#design">The approach</a><a href="#evidence">Test the claims</a><a class="nav-cta" href="#try">Try locally <span aria-hidden="true">↗</span></a></nav></header>
   <main>
     <section class="hero" aria-labelledby="hero-title">
       <div><div class="eyebrow"><span class="dot"></span> SELF-HOSTED / RESEARCH PREVIEW 0.3</div><h1 id="hero-title">Access on<br>your terms.</h1><p class="lead">Let approved readers in. Put boundaries on automated extraction. Inspect the decisions and the limits of your protection.</p><a class="button" href="#evidence">Explore the evidence <span aria-hidden="true">↓</span></a><p class="hero-note">Private repository · Open-source release planned</p></div>
@@ -20,7 +20,7 @@
       <div id="extraction-panel" role="tabpanel" aria-labelledby="extraction-tab" hidden><div class="table-wrap"><table><caption>Six controlled HTTP scenarios with independent state and deliberately small limits</caption><thead><tr><th scope="col">Scenario</th><th scope="col">Allowed / attempted</th><th scope="col">Blocked</th><th scope="col">Protected data received</th></tr></thead><tbody id="extraction-rows"></tbody></table></div><p class="footnote">Approved scripts can read within policy. Signing in again does not reset the per-credential extraction limits. These counts do not measure bot-classification accuracy.</p></div>
       <div class="evidence-footer"><span><span class="dot"></span> Real server checks. Reproducible locally.</span><button id="download" class="text-button">Download evidence JSON ↓</button></div>
     </section>
-    <section class="limits" aria-labelledby="limits-title"><div><div class="eyebrow">THE PART WE WON’T HIDE</div><h2 id="limits-title">An approved agent<br>can still get through.</h2></div><div><p>Client signals can be suppressed. A browser that receives content can save it. An approved agent operating within the limits may look like an approved reader.</p><p>Human Gate gives you admission control, optional declaration checks, and measurable limits on extraction. It is an early prototype, not a guarantee of complete agent isolation.</p></div></section>
+    <section class="limits" aria-labelledby="limits-title"><div><div class="eyebrow">THE PART WE WON’T HIDE</div><h2 id="limits-title">An approved agent<br>can still get through.</h2></div><div><p>Client signals can be suppressed. A browser that receives content can save it. An approved agent operating within the limits may look like an approved reader.</p><p>Voight gives you admission control, optional declaration checks, and measurable limits on extraction. It is an early prototype, not a guarantee of complete agent isolation.</p></div></section>
     <section class="research" aria-labelledby="research-title"><div class="eyebrow">RESEARCH INFORMED / OPEN QUESTIONS</div><h2 id="research-title">What we learned. What comes next.</h2><div class="research-grid"><article><span class="number">01</span><h3>Combine independent controls.</h3><p>Cloudflare describes several detection engines. Our takeaway: keep admission, automation evidence, and extraction limits separate and inspectable.</p><a href="https://developers.cloudflare.com/bots/concepts/bot-detection-engines/" target="_blank" rel="noopener noreferrer">Read the primary source ↗</a></article><article><span class="number">02</span><h3>A browser signal is a clue.</h3><p>WebDriver exposes a cooperative automation flag. We test both its detection and its suppression. Absence of the signal never proves humanity.</p><a href="https://www.w3.org/TR/webdriver/#interface" target="_blank" rel="noopener noreferrer">Read the specification ↗</a></article><article><span class="number">03</span><h3>Measure real-world errors.</h3><p>Agent-fingerprinting research suggests behavior matters. Next: consent-based trials with humans, assistive tools, and actual agents before choosing harder blocking rules.</p><a href="https://arxiv.org/abs/2605.01247" target="_blank" rel="noopener noreferrer">Read the research ↗</a></article></div></section>
     <section class="try" id="try" aria-labelledby="try-title"><div><div class="eyebrow">FOR INVITED EVALUATORS</div><h2 id="try-title">Try it. Challenge it.<br>Tell us what breaks.</h2><p>The source repository remains private. Request access from the person who shared this demo. Once you have the checkout, run these commands.</p></div><div class="terminal"><div class="terminal-label">LOCAL CHECKOUT / NODE 24</div><pre><code>npm ci
 npm run build
@@ -29,7 +29,7 @@ npm run browser:install
 npm run benchmark:browser
 npm run demo</code></pre><p>Open localhost:8787. Create an invitation with<br><code>npm run admin -- invite "Demo reader"</code></p></div></section>
   </main>
-  <footer><a class="brand" href="#"><span class="mark" aria-hidden="true">H</span> Human Gate</a><p>Early prototype. Independent project.<br>No affiliation with Cloudflare, X, or VideoLAN.</p><span class="footer-note">This demo works offline.<br>It sends no telemetry.</span></footer>
+  <footer><a class="brand" href="#"><span class="mark" aria-hidden="true">V</span> Voight</a><p>Early prototype. Independent project.<br>No affiliation with Cloudflare, X, or VideoLAN.</p><span class="footer-note">This demo works offline.<br>It sends no telemetry.</span></footer>
   <noscript><p class="footnote">JavaScript enables the evidence selector. The project description and evaluation instructions above remain readable.</p></noscript>
   <script type="application/json" id="evidence-data">/* EVIDENCE_JSON */</script>
   <script>/* SHOWCASE_JS */</script>
