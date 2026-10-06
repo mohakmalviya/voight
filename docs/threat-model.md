@@ -44,13 +44,13 @@ Field test (Windows laptop): installed Edge read 20 pages a minute with no check
 
 With `HUMAN_CHECK=always`, or once there is a reason, a request without a valid pass gets the check page (HTML) or `403 human_check_required` (anything else). The page asks the server for a challenge, then the visitor holds the button for 1.5 seconds. The verify request reports the webdriver flag, known automation-tool globals, window frame size, plugin count, user-agent brands, whether the gesture was a trusted event, how long it was held, and the last 64 pointer steps. The server rejects:
 
-- `automation_detected`: webdriver set, automation globals present, headless Chrome (a `HeadlessChrome` brand or user agent, or desktop Chrome with no window frame and no plugins), a mouse path in which one exact step of 2px or more occurs at least 10 times and makes up half or more of such steps, or a DevTools-protocol client attached (`devtools_protocol`, below);
+- `automation_detected`: webdriver set, automation globals present, headless Chrome (a `HeadlessChrome` brand or user agent, or desktop Chrome with no window frame and no plugins), a mouse path in which one exact step of 2px or more occurs at least 10 times and makes up half or more of such steps, a DevTools-protocol client attached (`devtools_protocol`, below), or desktop Firefox whose check page did not come back from the back/forward cache (`no_back_forward_cache` and `back_forward_reload`, below);
 - `human_check_failed`: an untrusted gesture, a hold shorter than 1.5 s by the page's clock *or* the server's, or a mouse that reached the button without moving, arrived in a final leap of more than 80px, or pressed more than 3px from where it last moved (how agent click tools behave);
 - `invalid_solution`: the small proof of work that rides along is wrong.
 
 ### DevTools-protocol clients
 
-Playwright, Puppeteer, Selenium 4 on Chrome, and most AI-agent browsers drive Chromium over the Chrome DevTools Protocol. Their mouse events are trusted and carry the same properties as a person's, so the check cannot tell them apart by input. What gives them away is that they enable the protocol's `Runtime` domain, after which V8 serialises every value the page logs and sends it to the client. At the end of the hold the page times 100 calls of `console.debug` with four `Error` objects against 100 with four numbers, seven rounds, and reports the median ratio (`devtools:<ratio>` in the log). At 3 or more the check fails with `devtools_protocol`. Only Chromium user agents are judged; Firefox and Safari log differently, and Chrome on iOS is WebKit.
+Playwright, Puppeteer, Selenium 4 on Chrome, and most AI-agent browsers drive Chromium over the Chrome DevTools Protocol. Their mouse events are trusted and carry the same properties as a person's, so the check cannot tell them apart by input. What gives them away is that they enable the protocol's `Runtime` domain, after which V8 serialises every value the page logs and sends it to the client. At the end of the hold the page times 100 calls of `console.debug` with four `Error` objects against 100 with four numbers, seven rounds, and reports the median ratio (`devtools:<ratio>` in the log). At 3 or more the check fails with `devtools_protocol`. Only Chromium is judged, by user agent or by the engine the page finds (`navigator.userAgentData` or `window.chrome`), so Chromium claiming to be Firefox is still timed; Firefox and Safari log differently, and Chrome on iOS is WebKit.
 
 Field measurements (Windows laptop, Edge 154, 125% display scaling):
 
@@ -69,6 +69,33 @@ The ratio is self-normalising, so a slow machine is not a problem; what separate
 The same timing runs again in a Web Worker (`worker:<ratio>`, 400–520 calls per block because workers log faster). Playwright's init scripts, and most page-level hooks, never run in workers, but an attached client listens to them anyway: with `console.debug` wrapped in the page so the page ratio fell to 1.04, the worker still measured 4.58–5.81. Where the page measured, a worker that never answers, or whose report does not open with its own key, counts as tampering. A person's Edge and Chrome measured 1.30–1.45 in the worker (eight runs, including 125% scaling).
 
 Both scripts also log one `Error` whose `name` and `message` are getters. A real console reads them, attached or not, in the page and in workers; a wrapper that swaps the arguments for harmless values does not. An unread `Error` counts as tampering (`console_tampered`). (These getters were rejected as a DevTools signal because they fire for everyone, which is exactly what makes them useful here.)
+
+### Firefox-based automation (Camoufox, Playwright's Firefox)
+
+The DevTools timing says nothing about Firefox, and Camoufox (a Firefox build for scraping, driven by Playwright over its own Juggler protocol) hides the webdriver flag and fakes a consistent machine. A script using it with a curved mouse path on a Mac at home passed the check on 2026-10-06 (65 movements, sandbox score 0).
+
+What it cannot hide cheaply is that Playwright's Firefox switches off the back/forward cache (`browser.sessionhistory.max_total_viewers=0`; Camoufox's own notes call the difference page-visible). So on desktop Firefox, found by the user agent or by the engine the page sees (`navigator.buildID`, `-moz-appearance`), the check page first steps to `/_gate/human/hop` and the hop page goes straight back:
+
+- A person's Firefox shows the check page again from its back/forward cache: nothing is loaded, the page receives `pageshow` with `persisted`, and only then asks for its challenge, naming the hop it made. The gateway counts that hop once, for the same user agent (`human_hop`).
+- A browser without that cache loads the check page again. The hop left a 60-second cookie and a record of the page it was made from, so that load is refused at once (`automation_detected`, signal `back_forward_reload`). The check page is sent with `Vary: *` so that a stored copy is never reused without asking the gateway; without it, Camoufox reused its cached copy and the gateway saw nothing. In case a load is not seen anyway, the page gives up after two trips that did not come back and asks without a hop, and the verify request then fails with `no_back_forward_cache`.
+
+For Firefox to keep the page it must be allowed to store it (`Cache-Control: private, no-cache`, not `no-store`), it must sit in its own browsing context group (`Cross-Origin-Opener-Policy: same-origin` on the check and hop pages, so a page opened by another site's script is not held by its opener), and it must have finished loading. The hop page only takes a same-origin top-level navigation (`Sec-Fetch-Site: same-origin`, `Sec-Fetch-Mode: navigate`, `Sec-Fetch-Dest: document`), so a `fetch` or a frame cannot stand in for the trip.
+
+Field measurements (Windows laptop, against the real gateway on localhost, `HUMAN_CHECK=always`):
+
+| Browser | Result |
+| --- | --- |
+| Installed Firefox 157, fresh profile | Came back from the cache; challenge issued with the hop counted |
+| The same, private window | Came back |
+| The same, with uBlock Origin, Dark Reader and Bitwarden | Came back |
+| Firefox opened by another page's `window.open` (probe page with the same headers) | Came back; without the opener policy it did not |
+| A 403 status on the page (probe page) | Came back |
+| Installed Edge 154 | No trip; challenge issued as before |
+| Camoufox 0.5.7 (browser 156.0.1) driven as the reported script drives it | Refused on loading again (`back_forward_reload`), before the button appeared |
+| The same, before `Vary: *` was added | Page reused from the HTTP cache; refused at verify (`no_back_forward_cache`) |
+| Camoufox with `browser.sessionhistory.max_total_viewers=-1` and `fission.bfcacheInParent=true` | Came back from the cache and got a challenge. Playwright then lost the page: every page call and even `mouse.move` failed with "Target crashed" (the tab's content process went away; the browser stayed connected). The script could not hold the button |
+
+That last row is not a fix. On a probe page without the opener policy, the same two preferences plus "blind" input (sleeps and fixed coordinates, no page calls) completed a hold. An attacker who also removes the `Cross-Origin-Opener-Policy` header (for example with Playwright's request interception) or who drives the window with operating-system input should get through, and is then judged only by the pointer rules and the machine signals. Not yet measured: Firefox on Mac and Linux, Firefox ESR, Tor Browser, and Firefox with `browser.sessionhistory.max_total_viewers` or `browser.cache.memory` changed by hand. Firefox on Android phones and on iOS does not make the trip; a Firefox build that claims to be one of those (Android user agent and touch points) is not asked to either. A person whose Firefox fails the trip sees "Automated browser detected" with a note that changed settings or add-ons can cause it; reloading tries again.
 
 ### The scrambled check script
 
@@ -118,6 +145,9 @@ A pass is a random token, stored hashed, valid for `HUMAN_PASS_SECONDS` (six hou
 | Stock Playwright, Proxy swapping every argument for a number | Refused: the worker still measures 5.6, and the logged `Error` is never read (field-tested; got in before the worker) |
 | The same, with the worker script blocked, or with the Proxy prepended to the worker script | Refused: no worker report, or an unread `Error` in both (field-tested) |
 | Stock Playwright, Proxy written for this check (reads `name` and `message`, then swaps) in the page and prepended to the worker | **Gets through** (field-tested). Each new check can be answered by a hook written against it |
+| Camoufox or Playwright's Firefox, webdriver hidden, faked human path on a personal computer | Refused: the check page loads again instead of coming back from the back/forward cache (field-tested; got in before 0.9.1) |
+| The same with the back/forward cache turned back on by preferences | Got a challenge, but Playwright lost the page and could not press (field-tested). Expected to **get through** with the opener-policy header stripped or with operating-system input |
+| Camoufox claiming to be Firefox on an Android phone | Not asked to make the trip. The machine signals still apply |
 | Agent that clicks by jumping the pointer onto the button | Fails: no pointer movement before the press, or the press lands away from the last movement |
 | Script faking a curved, jittery, eased human path in a headed browser on a personal computer | Caught when driven over the DevTools protocol with `Runtime` enabled (stock Playwright, Puppeteer). A fork that avoids it gets through, as above |
 | The same script on a cloud server | Refused with `SANDBOX_CHECK=enforce`: datacenter address, software GPU, missing voices and devices, bare screen (field-tested with a software GPU, a faked GPU name, and a simulated datacenter address) |

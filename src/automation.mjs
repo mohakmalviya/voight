@@ -44,8 +44,20 @@ export const DEVTOOLS_RATIO = 3;
 export const CONSOLE_TAMPERED_RATIO = 0.5;
 const chromiumUA = userAgent => /Chrome\//.test(userAgent) && !/Firefox|CriOS|EdgiOS|FxiOS/.test(userAgent);
 
+// Desktop Firefox keeps the check page in its back/forward cache when the page steps to the gate's hop page and back.
+// Camoufox and Playwright's Firefox switch that cache off, so they load the page again (the gateway refuses that reload).
+// Judged by the engine the page found, so a Firefox build claiming to be Chrome still has to make the trip. Firefox on
+// Android is not measured and does not make it.
+export function backForwardRequired(report, userAgent = '') {
+  const engine = report?.engine;
+  const gecko = engine === 'gecko' || (/Firefox\//.test(userAgent) && !/FxiOS/.test(userAgent) && engine !== 'chromium');
+  const handheld = /Android/.test(userAgent) && Number(report?.env?.touch) > 0;
+  return gecko && !handheld;
+}
+
 // What the human-check page reports. Every field is client-controlled, so missing or malformed values count against it.
-export function humanReport(report, userAgent = '') {
+// `returned` says whether this check's page came back from the hop page without loading again (null: not judged).
+export function humanReport(report, userAgent = '', { returned = null } = {}) {
   const value = report && typeof report === 'object' && !Array.isArray(report) ? report : {};
   const holdMs = Number.isFinite(value.holdMs) ? Math.max(0, Math.min(value.holdMs, 600000)) : 0;
   const pointer = ['mouse', 'touch', 'pen', 'keyboard'].includes(value.pointer) ? value.pointer : 'unknown';
@@ -61,12 +73,14 @@ export function humanReport(report, userAgent = '') {
   const frameless = frame?.[0] === 0 && frame?.[1] === 0 && plugins === 0 && /Chrome\//.test(userAgent) && !/Mobile/.test(userAgent);
   if (declaredUA.test(userAgent) || /HeadlessChrome/i.test(brands) || frameless) found.push('headless');
   if (pointer === 'mouse' && syntheticPath(path)) found.push('synthetic_pointer');
+  if (returned === false && backForwardRequired(value, userAgent)) found.push('no_back_forward_cache');
   const devtools = Number.isFinite(value.devtools) ? Math.max(0, Math.min(value.devtools, 1000)) : null;
-  if (devtools !== null && chromiumUA(userAgent) && devtools >= DEVTOOLS_RATIO) found.push('devtools_protocol');
+  // By user agent or by the engine the page found, so Chromium claiming to be Firefox is still timed.
+  const chromium = chromiumUA(userAgent) || value.engine === 'chromium';
+  if (devtools !== null && chromium && devtools >= DEVTOOLS_RATIO) found.push('devtools_protocol');
   // The same timing from a worker, which page-level console hooks do not reach. Where the page measured, a missing or
   // unreadable worker report means something stood in the way.
   const worker = value.worker && Number.isFinite(value.worker.devtools) ? Math.max(0, Math.min(value.worker.devtools, 1000)) : null;
-  const chromium = chromiumUA(userAgent);
   if (worker !== null && chromium && worker >= DEVTOOLS_RATIO && !found.includes('devtools_protocol')) found.push('devtools_protocol');
   if ((chromium && devtools !== null && devtools < CONSOLE_TAMPERED_RATIO) || (chromium && worker !== null && worker < CONSOLE_TAMPERED_RATIO)
     || (chromium && devtools !== null && 'worker' in value && worker === null) || value.hooked === true

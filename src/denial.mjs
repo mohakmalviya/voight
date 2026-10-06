@@ -45,7 +45,8 @@ const DENIALS = {
     intro: () => 'This website is for people reading it themselves. AI agents, assistants and AI crawlers cannot access it.',
     note: ['If you are a person', 'Open this page in your own browser, without an AI assistant or agent acting for you.'] },
   automation_detected: { mark: 'bot', tone: 'danger', title: 'Automated browser detected',
-    intro: () => 'This browser appears to be controlled by automation software or an AI agent, so the human check cannot pass. If you have developer tools open, close them and reload.' },
+    intro: () => 'This browser appears to be controlled by automation software or an AI agent, so the human check cannot pass. If you have developer tools open, close them and reload.',
+    note: ['If you are a person', 'Reload this page and try once more. In Firefox, changed settings or add-ons that stop it from keeping pages for the Back button can also cause this.'] },
   sandbox_detected: { mark: 'server', tone: 'danger', title: 'Server browser detected',
     intro: () => 'This browser appears to be running on a server or in a virtual machine, not on a personal device.' },
   automation_declared: { mark: 'bot', tone: 'danger', title: 'Automated access is restricted',
@@ -73,6 +74,15 @@ export function challengePage({ retryAfter, requestID, site }) {
     body: `<div class="progress" aria-hidden="true"></div><p id="status" role="status" aria-live="polite">Starting the check.</p>${RETRY}`
       + `<noscript><p class="help">This check needs JavaScript. Otherwise, wait about ${duration(retryAfter)} and reload this page.</p></noscript>`,
     head: '<script type="module" src="/_gate/challenge.js"></script>' });
+}
+
+// The human check's stop on the way back to itself (see hopPage in the gateway). People normally see it for a moment at most.
+export function hopPage({ requestID, site }) {
+  return page({ title: 'Checking your browser', headingID: 'hop-heading', state: 'working', tone: 'accent', requestID, site, marks: STATE_MARKS,
+    intro: 'Returning to the human check.',
+    body: `<p id="status" role="status" aria-live="polite">One moment…</p><button id="retry" class="button secondary" type="button">Return to the check</button>`
+      + '<noscript><p class="help">This check needs JavaScript. Turn it on and go back to the previous page.</p></noscript>',
+    head: '<script type="module" src="/_gate/hop.js"></script>' });
 }
 
 // A plainly labelled human check. Mainstream AI agents are built to stop at these and hand control to the person.
