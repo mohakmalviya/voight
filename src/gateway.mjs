@@ -5,7 +5,7 @@ import { createHash, randomUUID } from 'node:crypto';
 import { token, digest } from './store.mjs';
 import { webauthn } from './webauthn.mjs';
 import { automationSignals, reportedWebdriver, automationDecision, humanReport, headerAnomaly } from './automation.mjs';
-import { denialPage, challengePage, humanPage } from './denial.mjs';
+import { denialPage, challengePage, humanPage, hopPage } from './denial.mjs';
 import { declaredAIAgent, crawlerVerifier } from './agents.mjs';
 import { clientAddress, networkPrefix } from './network.mjs';
 import { sandboxReport, SANDBOX_BLOCK_SCORE, SANDBOX_STRICT_SCORE } from './sandbox.mjs';
@@ -23,6 +23,9 @@ export const HUMAN_HOLD_MS = 1500;
 // Outcomes after which a network has to pass the human check for a while, whatever its requests look like.
 const SUSPECT_OUTCOMES = new Set(['automation_detected', 'sandbox_detected', 'human_check_failed', 'temporarily_blocked']);
 const SUSPECT_MS = 3600000;
+// A check page that loads again this soon after stepping to the hop page did not come back from the back/forward cache.
+const HOP_RELOAD_MS = 15000;
+const HOP_ID = /^[A-Za-z0-9_-]{43}$/;
 
 class Denied extends Error {
   constructor(status, reason, retryAfter = 60) { super(reason); this.status = status; this.retryAfter = retryAfter; }
@@ -88,6 +91,7 @@ export function createGateway({ config, store, assets, auth = webauthn(config), 
   const ceremonyCookie = config.secure ? '__Host-hg_ceremony' : 'hg_ceremony';
   const clearanceCookie = config.secure ? '__Host-hg_clearance' : 'hg_clearance';
   const humanCookie = config.secure ? '__Host-hg_human' : 'hg_human';
+  const hopCookie = config.secure ? '__Host-hg_hop' : 'hg_hop';
   const verifyCrawler = crawlerVerifier(config.verifiedCrawlers ?? [], resolver);
   // Answered without any check, so crawlers can read the site's rules (and operators can add feeds).
   const openPaths = new Set(config.openPaths ?? ['/robots.txt']);
@@ -104,6 +108,15 @@ export function createGateway({ config, store, assets, auth = webauthn(config), 
     // Page after page from one network faster than people read: everyone there confirms once.
     if (document && !store.limit(`pages:${network}`, config.humanPagesPerMinute)) { store.mark(`suspect:${network}`, SUSPECT_MS); return 'paging'; }
     return null;
+  }
+  // The check page stepped to the hop page and is now being loaded again, instead of coming back from the
+  // back/forward cache as Firefox does (see backForwardRequired in automation.mjs). Uses up the hop.
+  function reloadedAfterHop(req, url, ua) {
+    const id = cookie(req, hopCookie);
+    const hop = id && store.peekChallenge(`hop:${id}`);
+    if (!hop || hop.kind !== 'hop' || hop.path !== url.pathname + url.search || hop.ua !== digest(ua) || store.now() - hop.at > HOP_RELOAD_MS) return false;
+    store.takeChallenge(`hop:${id}`);
+    return true;
   }
   const setCookie = (res, name, value, seconds, sameSite = 'Strict') => res.appendHeader('set-cookie', `${name}=${value}; Path=/; HttpOnly; SameSite=${sameSite}; Max-Age=${seconds}${config.secure ? '; Secure' : ''}`);
   const server = http.createServer({ maxHeaderSize: 16384 }, async (req, res) => {
@@ -164,6 +177,22 @@ export function createGateway({ config, store, assets, auth = webauthn(config), 
           res.setHeader('cache-control', 'no-store');
           outcome = 'human_probe'; return send(res, 200, pending.probe.workerSource, 'text/javascript; charset=utf-8');
         }
+        // The human check page steps here and straight back. Firefox returns to the page it left; a browser without a
+        // back/forward cache loads it again, which the record and cookie let the gateway see.
+        if (req.method === 'GET' && isPublic && config.humanCheck !== 'off' && url.pathname === `${PREFIX}human/hop`) {
+          // Only the page itself, navigating this tab: a fetch, a frame or a new tab would leave the check page where it was.
+          if (req.headers['sec-fetch-site'] !== 'same-origin' || req.headers['sec-fetch-mode'] !== 'navigate' || req.headers['sec-fetch-dest'] !== 'document') throw new Denied(403, 'invalid_hop');
+          const id = url.searchParams.get('id') ?? '', to = url.searchParams.get('to') ?? '';
+          if (!HOP_ID.test(id) || !to.startsWith('/') || to.startsWith('//') || to.length > 2048 || /[\\\x00-\x20]/.test(to)) throw new Denied(400, 'invalid_hop');
+          const page = new URL(to, config.origin);
+          // Coming forward to this page again later records nothing; the page still goes back.
+          const fresh = store.hop(id, { kind: 'hop', path: page.pathname + page.search, ua: digest(ua), network, at: store.now() });
+          if (fresh) setCookie(res, hopCookie, id, 60);
+          outcome = fresh ? 'human_hop' : 'human_hop_repeat';
+          // The same opener policy as the check page, so the trip stays in one browsing context group.
+          res.setHeader('cross-origin-opener-policy', 'same-origin');
+          return send(res, 200, hopPage({ requestID, site: new URL(config.origin).hostname }), 'text/html; charset=utf-8');
+        }
         if (req.method !== 'POST') throw new Denied(404, 'not_found');
         if (req.headers.origin !== config.origin) throw new Denied(403, 'origin_mismatch');
         if (!store.limit(`auth:${network ?? digest(ip)}`, 20)) throw new Denied(429, 'auth_rate');
@@ -195,7 +224,12 @@ export function createGateway({ config, store, assets, auth = webauthn(config), 
             const challenge = token(), difficulty = config.challengeDifficulty;
             store.takeChallenge(cookie(req, ceremonyCookie));
             const probe = scrambledProbe();
-            setCookie(res, ceremonyCookie, store.challenge({ kind: 'human', challenge, difficulty, ua: digest(ua), issued: store.now(), probe }), 120);
+            // Whether the page came back from the hop page without loading again. Each hop counts once.
+            const hopID = typeof body.hop === 'string' && HOP_ID.test(body.hop) ? body.hop : '';
+            const hop = hopID && store.takeChallenge(`hop:${hopID}`);
+            const returned = Boolean(hop && hop.kind === 'hop' && hop.ua === digest(ua));
+            if (hopID && cookie(req, hopCookie) === hopID) setCookie(res, hopCookie, '', 0);
+            setCookie(res, ceremonyCookie, store.challenge({ kind: 'human', challenge, difficulty, ua: digest(ua), issued: store.now(), probe, returned }), 120);
             outcome = 'human_check_issued'; return send(res, 200, { challenge, difficulty, holdMs: HUMAN_HOLD_MS });
           }
           if (config.humanCheck !== 'off' && url.pathname === `${PREFIX}human/verify`) {
@@ -206,7 +240,7 @@ export function createGateway({ config, store, assets, auth = webauthn(config), 
             if (!reported) { signals.push('report_tampered'); throw new Denied(403, 'automation_detected'); }
             // The worker's timing, sealed with its own key: null when absent, false when it does not open.
             const worker = reported.worker == null ? null : (openReport(reported.worker, pending.probe.workerKey) ?? false);
-            const report = humanReport({ ...reported, worker }, ua);
+            const report = humanReport({ ...reported, worker }, ua, { returned: pending.returned === true });
             signals.push(...report.notes);
             const sandbox = config.sandboxCheck === 'off' ? null : sandboxReport(reported.env, ua, { datacenter: cloud?.has(ip) ?? false, brands: reported.brands });
             if (sandbox) signals.push(...sandbox.notes);
@@ -285,6 +319,9 @@ export function createGateway({ config, store, assets, auth = webauthn(config), 
         const crawler = !human && await verifyCrawler(ip, ua);
         const reason = !human && !crawler && suspicion(req, ua, ip, network);
         if (crawler) signals.push(`crawler:${crawler}`);
+        else if (reason && isDocument(req) && reloadedAfterHop(req, url, ua)) {
+          setCookie(res, hopCookie, '', 0); signals.push('back_forward_reload'); throw new Denied(403, 'automation_detected');
+        }
         else if (reason) { signals.push(`suspect:${reason}`); throw new Denied(403, 'human_check_required'); }
         else if (human && isDocument(req) && !store.limit(`humannav:${human.hash}`, config.humanPagesPerMinute)) {
           // Page after page faster than anyone reads: an agent may have taken over. Ask again.
@@ -384,6 +421,13 @@ export function createGateway({ config, store, assets, auth = webauthn(config), 
         const challenge = network && CLEARABLE_REASONS.has(outcome) && store.clearanceCount(network) < config.clearancesPerWindow;
         const human = ['human_check_required', 'human_recheck'].includes(outcome);
         const site = new URL(config.origin).hostname;
+        if (human) {
+          // Firefox keeps the check page for its trip to the hop page only if the page may be stored, and only in its
+          // own browsing context group: a page another site opened by script shares the opener's group until COOP splits it.
+          res.setHeader('cache-control', 'private, no-cache');
+          res.setHeader('vary', '*');
+          res.setHeader('cross-origin-opener-policy', 'same-origin');
+        }
         send(res, status, human ? humanPage({ recheck: outcome === 'human_recheck', requestID, passSeconds: config.humanPassSeconds, site })
           : challenge ? challengePage({ retryAfter: failure.retryAfter, requestID, site })
           : denialPage({ status, reason: outcome, retryAfter: failure.retryAfter, requestID, site }), 'text/html; charset=utf-8');

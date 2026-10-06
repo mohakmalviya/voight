@@ -98,9 +98,40 @@ button.addEventListener('keyup', event => { if (event.key === ' ' || event.key =
 button.addEventListener('contextmenu', event => event.preventDefault());
 document.querySelector('#retry').addEventListener('click', () => location.reload());
 
+// Desktop Firefox keeps this page in its back/forward cache while it steps to the gate's hop page, and shows it again
+// when the hop page goes back. Camoufox and Playwright's Firefox switch that cache off, so they load the page again,
+// which the gateway refuses. Resolves to the hop's id once this page has come back (undefined: not made or not back).
+const here = location.pathname + location.search;
+const HOPPED = 'human-gate-hop';
+function roundTrip() {
+  const gecko = typeof navigator.buildID === 'string' || 'MozAppearance' in document.documentElement.style;
+  if (!gecko || (/Android/.test(navigator.userAgent) && navigator.maxTouchPoints > 0)) return Promise.resolve(undefined);
+  let left = null;
+  try { left = JSON.parse(sessionStorage.getItem(HOPPED)); } catch {}
+  const recent = left?.to === here && Date.now() - left.at < 15000 ? left.tries : 0;
+  // Loaded again twice in a row instead of coming back: stop going round. The report then says the page did not return.
+  if (recent >= 2) { try { sessionStorage.removeItem(HOPPED); } catch {} return Promise.resolve(undefined); }
+  const id = btoa(String.fromCharCode(...crypto.getRandomValues(new Uint8Array(32)))).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+  return new Promise(resolve => {
+    addEventListener('pageshow', event => {
+      if (!event.persisted) return;
+      try { sessionStorage.removeItem(HOPPED); } catch {}
+      resolve(id);
+    });
+    // After load and with nothing still loading: Firefox does not keep pages that are busy.
+    const go = () => setTimeout(() => {
+      status.textContent = 'Checking this browser…';
+      try { sessionStorage.setItem(HOPPED, JSON.stringify({ to: here, at: Date.now(), tries: recent + 1 })); } catch {}
+      location.assign(`/_gate/human/hop?id=${id}&to=${encodeURIComponent(here)}`);
+    }, 50);
+    if (document.readyState === 'complete') go(); else addEventListener('load', go, { once: true });
+  });
+}
+
 (async () => {
   if (!crypto.subtle) throw new Error('This browser cannot run the check here. Try a current browser.');
-  const options = await post('options', {});
+  const hop = await roundTrip();
+  const options = await post('options', { hop });
   holdMs = options.holdMs ?? holdMs;
   solution = work(options.challenge, options.difficulty);
   solution.catch(() => {});

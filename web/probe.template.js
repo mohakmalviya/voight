@@ -42,6 +42,11 @@ const $_globals = () => [$S('__playwright__binding__'), $S('__pwInitScripts'), $
   $S('__selenium_evaluate'), $S('__nightmare'), $S('domAutomation'), $S('domAutomationController'), $S('callPhantom'), $S('_phantom')].some($_name => $_name in $_g)
   || Object.keys($_doc).some($_key => $_key.startsWith($S('$cdc_')) || $_key.startsWith($S('cdc_')));
 
+// Which engine runs the page, whatever the user agent says: Firefox keeps navigator.buildID and -moz- styles, Chromium
+// has userAgentData or window.chrome.
+const $_engine = () => typeof $_nav[$S('buildID')] === $S('string') || $S('MozAppearance') in $_doc[$S('documentElement')][$S('style')] ? $S('gecko')
+  : $_nav[$S('userAgentData')] || $_g[$S('chrome')] ? $S('chromium') : $S('other');
+
 // What kind of machine this is (weighed by sandboxReport on the server).
 const $_sha = async $_bytes => [...new Uint8Array(await $_g[$S('crypto')][$S('subtle')][$S('digest')]($S('SHA-256'), $_bytes))].slice(0, 8).map($_b => $_b.toString(16).padStart(2, '0')).join('');
 async function $_graphics() {
@@ -131,7 +136,7 @@ export default function $_start() {
       return $_seal({ ...$_gesture,
         [$S('webdriver')]: $_nav[$S('webdriver')] === true, [$S('automationGlobals')]: $_globals(), [$S('hooked')]: $_hooked(), [$S('devtools')]: $_ratio, [$S('worker')]: $_workerReport, [$S('touched')]: $_touch,
         [$S('frame')]: [$_g.outerWidth - $_g.innerWidth, $_g.outerHeight - $_g.innerHeight], [$S('plugins')]: $_nav[$S('plugins')]?.length ?? -1,
-        [$S('brands')]: $_brands, [$S('env')]: $_env });
+        [$S('brands')]: $_brands, [$S('engine')]: $_engine(), [$S('env')]: $_env });
     },
   };
 }

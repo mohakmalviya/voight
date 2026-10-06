@@ -58,6 +58,11 @@ export class Store {
     this.db.prepare('INSERT INTO challenges VALUES(?,?,?)').run(digest(value), JSON.stringify(payload), this.now() + 120000);
     return value;
   }
+  // The human check page's trip to the hop page and back, under an id the page made up. Read it with
+  // peekChallenge/takeChallenge(`hop:${id}`); ceremony cookies never contain a colon, so the two cannot meet.
+  hop(id, payload) {
+    return this.db.prepare('INSERT OR IGNORE INTO challenges VALUES(?,?,?)').run(digest(`hop:${id}`), JSON.stringify(payload), this.now() + 60000).changes === 1;
+  }
   peekChallenge(value) {
     const row = this.db.prepare('SELECT payload FROM challenges WHERE hash=? AND expires>?').get(digest(value ?? ''), this.now());
     return row ? JSON.parse(row.payload) : null;

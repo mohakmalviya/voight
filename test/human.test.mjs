@@ -1,9 +1,10 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { createHash } from 'node:crypto';
+import { createHash, randomBytes } from 'node:crypto';
+import http from 'node:http';
 import { createFixture } from './fixture.mjs';
 import { leadingZeroBits } from '../src/gateway.mjs';
-import { humanReport, headerAnomaly, unbrandedChromium } from '../src/automation.mjs';
+import { humanReport, headerAnomaly, unbrandedChromium, backForwardRequired } from '../src/automation.mjs';
 import { declaredAIAgent } from '../src/agents.mjs';
 import { Store } from '../src/store.mjs';
 import { cloudRanges, sandboxReport } from '../src/sandbox.mjs';
@@ -42,8 +43,8 @@ function solve(challenge, difficulty) {
 }
 // Runs the check the way the page does: ask, hold for a moment, then send the report sealed with this check's key.
 const probeKey = (f, cookie) => f.store.peekChallenge(cookie.split('=')[1]).probe.key;
-async function check(f, { signals = {}, wait = 1600, headers = visitor(), verifyHeaders = headers, nonce, report } = {}) {
-  const issued = await f.post('/_gate/human/options', {}, null, headers);
+async function check(f, { signals = {}, wait = 1600, headers = visitor(), verifyHeaders = headers, nonce, report, hop } = {}) {
+  const issued = await f.post('/_gate/human/options', hop ? { hop } : {}, null, headers);
   assert.equal(issued.status, 200);
   const { challenge, difficulty, holdMs } = await issued.json();
   assert.equal(holdMs, 1500);
@@ -417,4 +418,120 @@ test('open paths skip the check for feeds and similar files, and settings are va
   assert.equal(configFromEnv({}).humanCheck, 'suspicious');
   assert.throws(() => configFromEnv({ HUMAN_CHECK: 'sometimes' }), /HUMAN_CHECK/);
   assert.throws(() => configFromEnv({ OPEN_PATHS: 'feed.xml' }), /OPEN_PATHS/);
+});
+
+// Desktop Firefox, and the check page's own step to the hop page: a same-origin navigation of this tab.
+const FIREFOX = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:143.0) Gecko/20100101 Firefox/143.0';
+const LOAD = { accept: 'text/html', 'sec-fetch-site': 'same-origin', 'sec-fetch-mode': 'navigate', 'sec-fetch-dest': 'document' };
+const hopID = () => randomBytes(32).toString('base64url');
+// Node's fetch adds Fetch Metadata of its own, so page loads go out exactly as a browser sends them.
+function navigate(f, path, headers) {
+  return new Promise((resolve, reject) => {
+    http.get(`${f.config.origin}${path}`, { headers }, res => {
+      let text = ''; res.setEncoding('utf8');
+      res.on('data', chunk => { text += chunk; });
+      res.on('end', () => resolve({ status: res.statusCode, headers: res.headers, text, cookie: res.headers['set-cookie']?.[0].split(';')[0] }));
+    }).on('error', reject);
+  });
+}
+const hopTo = (f, id, to, headers) => navigate(f, `/_gate/human/hop?id=${id}&to=${encodeURIComponent(to)}`, { ...LOAD, ...headers });
+
+test('Firefox has to come back from the hop page without loading the check again', async t => {
+  const f = await fixture(t);
+  const firefox = visitor('203.0.113.50', { 'user-agent': FIREFOX });
+  const shown = await navigate(f, '/article?id=7', { ...firefox, ...LOAD, 'sec-fetch-site': 'none' });
+  assert.equal(shown.status, 403); assert.match(shown.text, /Confirm you are human/);
+  // Firefox keeps a page for the Back button only if it may be stored, and only away from a page that opened it.
+  assert.equal(shown.headers['cache-control'], 'private, no-cache');
+  assert.equal(shown.headers['cross-origin-opener-policy'], 'same-origin');
+  // And a stored copy is never reused, so a browser without that cache has to ask the gateway again.
+  assert.equal(shown.headers.vary, '*');
+  // Camoufox as shipped: no trip made, or the trip's page loaded again, so no hop to show.
+  const skipped = await check(f, { headers: firefox });
+  assert.equal(await errorOf(skipped), 'automation_detected');
+  assert.ok(f.audit.at(-1).automationSignals.includes('no_back_forward_cache'));
+
+  const person = visitor('198.51.100.51', { 'user-agent': FIREFOX });
+  const id = hopID();
+  const stepped = await hopTo(f, id, '/article?id=7', person);
+  assert.equal(stepped.status, 200);
+  assert.match(stepped.text, /\/_gate\/hop\.js/);
+  assert.match(stepped.headers['set-cookie'][0], new RegExp(`^hg_hop=${id}; Path=/; HttpOnly; SameSite=Strict; Max-Age=60`));
+  assert.equal(stepped.headers['cache-control'], 'no-store, private');
+  assert.equal(stepped.headers['cross-origin-opener-policy'], 'same-origin');
+  const passed = await check(f, { headers: person, hop: id });
+  assert.equal(passed.status, 200, await passed.clone().text());
+  // Each trip counts once, and only for the browser that made it.
+  assert.equal(await errorOf(await check(f, { headers: person, hop: id })), 'automation_detected');
+  const other = hopID();
+  assert.equal((await hopTo(f, other, '/', person)).status, 200);
+  assert.equal(await errorOf(await check(f, { headers: visitor('198.51.100.51', { 'user-agent': `${FIREFOX} Other` }), hop: other })), 'automation_detected');
+  // Other browsers do not make the trip.
+  assert.equal((await check(f, { headers: visitor('192.0.2.52', CHROME) })).status, 200);
+});
+
+test('a check page loaded again straight after its hop is refused as automation', async t => {
+  const f = await fixture(t);
+  const firefox = visitor('203.0.113.60', { 'user-agent': FIREFOX });
+  const { cookie } = await hopTo(f, hopID(), '/article?id=7', firefox);
+  assert.ok(cookie);
+  // Another page, or a request that is not a page load, is just a new check.
+  assert.match((await navigate(f, '/other', { ...firefox, ...LOAD, cookie })).text, /Confirm you are human/);
+  assert.equal(await errorOf(await f.request('/article?id=7', { headers: { ...firefox, cookie } })), 'human_check_required');
+  const reloaded = await navigate(f, '/article?id=7', { ...firefox, ...LOAD, cookie });
+  assert.equal(reloaded.status, 403);
+  assert.match(reloaded.text, /Automated browser detected[\s\S]*Back button/);
+  assert.match(reloaded.headers['set-cookie'][0], /^hg_hop=; .*Max-Age=0/);
+  assert.equal(f.audit.at(-1).reason, 'automation_detected');
+  assert.deepEqual(f.audit.at(-1).automationSignals, ['back_forward_reload']);
+  // Used up: loading it again is a new check.
+  assert.match((await navigate(f, '/article?id=7', { ...firefox, ...LOAD, cookie })).text, /Confirm you are human/);
+  // So is the same page a while later.
+  const late = await hopTo(f, hopID(), '/late', firefox);
+  f.advance(15001);
+  assert.match((await navigate(f, '/late', { ...firefox, ...LOAD, cookie: late.cookie })).text, /Confirm you are human/);
+  // Another browser's cookie does not get this one refused.
+  const theirs = await hopTo(f, hopID(), '/mine', firefox);
+  assert.match((await navigate(f, '/mine', { ...visitor('203.0.113.60', { 'user-agent': `${FIREFOX} Other` }), ...LOAD, cookie: theirs.cookie })).text, /Confirm you are human/);
+});
+
+test('the hop page takes only the check page’s own step', async t => {
+  const f = await fixture(t);
+  const firefox = visitor('203.0.113.70', { 'user-agent': FIREFOX });
+  const id = hopID();
+  // A fetch, a frame or a new tab would leave the check page where it was.
+  for (const extra of [{ 'sec-fetch-mode': 'cors', 'sec-fetch-dest': 'empty' }, { 'sec-fetch-dest': 'iframe' }, { 'sec-fetch-site': 'none' }, { 'sec-fetch-site': 'cross-site' }]) {
+    assert.equal((await hopTo(f, id, '/', { ...firefox, ...extra })).status, 403, JSON.stringify(extra));
+  }
+  assert.equal((await navigate(f, `/_gate/human/hop?id=${id}&to=%2F`, firefox)).status, 403);
+  for (const [badID, to] of [['short', '/'], [id, '//evil.example/'], [id, 'https://evil.example/'], [id, '/a b'], [id, `/${'a'.repeat(2048)}`]]) {
+    assert.equal((await hopTo(f, badID, to, firefox)).status, 400, to.slice(0, 40));
+  }
+  assert.equal(f.audit.at(-1).reason, 'invalid_hop');
+  assert.equal((await hopTo(f, id, '/', firefox)).status, 200);
+  // Coming forward to the hop page again later still goes back, and records nothing new.
+  const again = await hopTo(f, id, '/', firefox);
+  assert.equal(again.status, 200); assert.equal(again.cookie, undefined);
+  assert.equal(f.audit.at(-1).reason, 'human_hop_repeat');
+  // Only while the human check is in use.
+  const off = await fixture(t, {}, { HUMAN_CHECK: 'off' });
+  assert.equal((await hopTo(off, hopID(), '/', firefox)).status, 404);
+});
+
+test('which browsers must come back from the hop page', () => {
+  const chrome = 'Mozilla/5.0 (Windows NT 10.0) Chrome/141.0 Safari/537.36';
+  const android = 'Mozilla/5.0 (Android 15; Mobile; rv:143.0) Gecko/143.0 Firefox/143.0';
+  assert.equal(humanReport(HUMAN, FIREFOX).automated, false); // Not judged.
+  assert.equal(humanReport(HUMAN, FIREFOX, { returned: true }).automated, false);
+  assert.deepEqual(humanReport(HUMAN, FIREFOX, { returned: false }).notes.slice(0, 1), ['no_back_forward_cache']);
+  // By engine: Firefox claiming to be Chrome still makes the trip, and Chromium claiming to be Firefox is still timed.
+  assert.equal(backForwardRequired({ engine: 'gecko' }, chrome), true);
+  assert.equal(humanReport({ ...HUMAN, engine: 'gecko' }, chrome, { returned: false }).automated, true);
+  assert.equal(backForwardRequired({ engine: 'chromium' }, FIREFOX), false);
+  assert.deepEqual(humanReport({ ...HUMAN, engine: 'chromium', devtools: 4.47 }, FIREFOX, { returned: false }).notes.slice(0, 1), ['devtools_protocol']);
+  assert.equal(backForwardRequired({ engine: 'other' }, 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 Version/18.0 Safari/605.1.15'), false);
+  // Firefox on Android phones and on iPhone is not measured.
+  assert.equal(backForwardRequired({ engine: 'gecko', env: { touch: 5 } }, android), false);
+  assert.equal(backForwardRequired({ engine: 'gecko', env: { touch: 0 } }, android), true);
+  assert.equal(backForwardRequired({}, 'Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X) FxiOS/143.0 Mobile/15E148 Safari/605.1.15'), false);
 });
