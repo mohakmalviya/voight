@@ -64,6 +64,24 @@ export function backForwardRequired(report, userAgent = '') {
 export const PREDICTED_MIN_MOVES = 10;
 export const PREDICTED_MIN_SHARE = 0.2;
 const windowsDesktop = userAgent => /Windows NT/.test(userAgent) && !/Mobile|Android/.test(userAgent);
+// Windows keeps the mouse cursor on whole physical pixels, so every screenX and screenY a real mouse produces, times
+// the display scale, is a whole number: 326 of 326 moves in Edge and Chrome, at 100%, 125% and 150% scaling and at page
+// zooms from 90% to 200%. Page zoom is part of devicePixelRatio but not of screenX, so the scale is devicePixelRatio
+// itself or a Windows scale that a Chrome zoom level turns into it. Scripted moves land between pixels unless the
+// script works out the grid: 40 of 40 and 80 of 123 moves off it. The zoom levels tried are limited by the window:
+// the page (innerHeight, zoomed) fits inside the window (outerHeight), under at most 300px of toolbars.
+export const GRID_MIN_MOVES = 10;
+export const GRID_MIN_SHARE = 0.8;
+const WINDOWS_SCALES = [1, 1.25, 1.5, 1.75, 2, 2.25, 2.5, 3, 3.5, 4, 4.5, 5];
+const CHROME_ZOOMS = [0.25, 1 / 3, 0.5, 2 / 3, 0.75, 0.8, 0.9, 1, 1.1, 1.25, 1.5, 1.75, 2, 2.5, 3, 4, 5];
+export function pixelGridShare(points, dpr, [outer, inner] = []) {
+  const sized = Number.isFinite(outer) && Number.isFinite(inner) && inner > 0;
+  const zooms = sized ? CHROME_ZOOMS.filter(zoom => zoom >= (outer - 300) / inner && zoom <= outer / inner * 1.02) : CHROME_ZOOMS;
+  const scales = [dpr, ...WINDOWS_SCALES.filter(scale => zooms.some(zoom => Math.abs(scale * zoom - dpr) < 0.005 * dpr))];
+  const whole = v => Math.abs(v - Math.round(v)) < 0.02;
+  return Math.max(...scales.map(scale => points.filter(([x, y]) => whole(x * scale) && whole(y * scale)).length / points.length));
+}
+
 // A key held down repeats after at most a second on Windows (its longest delay setting), so a held Space or Enter
 // sends repeated keydowns before the hold completes. A script that presses once and waits sends one.
 export const KEY_REPEAT_HOLD_MS = 1200;
@@ -101,6 +119,12 @@ export function humanReport(report, userAgent = '', { returned = null } = {}) {
   // [moves, moves with predictions], counted by the probe for the mouse.
   const input = Array.isArray(value.input) && value.input.length === 2 && value.input.every(n => Number.isSafeInteger(n) && n >= 0) ? value.input : null;
   if (input && chromium && pointer === 'mouse' && windowsDesktop(userAgent) && input[0] >= PREDICTED_MIN_MOVES && input[1] < input[0] * PREDICTED_MIN_SHARE) found.push('no_predicted_input');
+  // [screenX, screenY] of the last 64 mouse moves, devicePixelRatio and [outerHeight, innerHeight], from the probe.
+  const points = (Array.isArray(value.points) ? value.points.slice(-64) : []).filter(point => Array.isArray(point) && point.length === 2 && point.every(Number.isFinite));
+  const dpr = Number.isFinite(value.dpr) && value.dpr >= 0.25 && value.dpr <= 25 ? value.dpr : null;
+  const heights = Array.isArray(value.heights) && value.heights.length === 2 && value.heights.every(Number.isFinite) ? value.heights : [];
+  const grid = dpr && points.length >= GRID_MIN_MOVES ? pixelGridShare(points, dpr, heights) : null;
+  if (grid !== null && chromium && pointer === 'mouse' && windowsDesktop(userAgent) && grid < GRID_MIN_SHARE) found.push('off_grid_pointer');
   // Touch input on a Windows PC that reports no multi-touch screen, or on a Mac (Macs have no touchscreen): what the
   // DevTools protocol's touch emulation produces. Windows touchscreens report 5 or more touch points.
   const touchPoints = Number.isSafeInteger(value.env?.touch) ? value.env.touch : null;
@@ -121,7 +145,7 @@ export function humanReport(report, userAgent = '', { returned = null } = {}) {
     // check (the page suggests the pointer) rather than calling the browser automated.
     unrepeated,
     notes: [...found, ...(unrepeated ? ['no_key_repeat'] : []), `pointer:${pointer}`, `moves:${path.length ? path.length + 1 : 0}`,
-      ...(input && pointer === 'mouse' ? [`predicted:${input[1]}/${input[0]}`] : []), ...(pointer === 'keyboard' ? [`repeats:${repeats}`] : []),
+      ...(input && pointer === 'mouse' ? [`predicted:${input[1]}/${input[0]}`] : []), ...(grid !== null && pointer === 'mouse' ? [`grid:${grid.toFixed(2)}`] : []), ...(pointer === 'keyboard' ? [`repeats:${repeats}`] : []),
       ...(devtools === null ? [] : [`devtools:${devtools.toFixed(2)}`]), ...(worker === null ? [] : [`worker:${worker.toFixed(2)}`])],
   };
 }

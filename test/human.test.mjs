@@ -155,6 +155,25 @@ test('scripted input on Windows is caught: unpredicted moves, emulated touch and
   // Not judged where it was not measured: other engines and other systems.
   for (const ua of [firefox, mac, 'Mozilla/5.0 (X11; Linux x86_64) Chrome/141.0 Safari/537.36']) assert.equal(humanReport({ ...HUMAN, input: [40, 0] }, ua).automated, false, ua);
   for (const input of [[40], [40, -1], [40, 0.5], '40,0', null]) assert.equal(humanReport({ ...HUMAN, input }, edge).automated, false);
+  // Screen positions: a real mouse stays on whole physical pixels at any page zoom; scripted moves fall between them.
+  const real = (dpr, scale = dpr, n = 20) => ({ dpr, heights: [797, Math.round(706 * scale / dpr)], points: Array.from({ length: n }, (_, i) => [(300 + i * 3) / scale, (400 + (i % 3)) / scale]) });
+  for (const [dpr, scale] of [[1.25], [1], [1.5], [1.5625, 1.25], [1.125, 1.25], [1.375, 1.25], [2.5, 1.25], [1.1]]) {
+    assert.equal(humanReport({ ...HUMAN, ...real(dpr, scale) }, edge).automated, false, `${dpr} ${scale}`);
+  }
+  assert.deepEqual(humanReport({ ...HUMAN, ...real(1.25) }, edge).notes, ['pointer:mouse', 'moves:9', 'grid:1.00']);
+  const scripted = { dpr: 1.25, points: Array.from({ length: 20 }, (_, i) => [298.2966 + i * 31.0137, 210.4419 + i * 7.31]) };
+  assert.deepEqual(humanReport({ ...HUMAN, ...scripted }, edge).notes, ['off_grid_pointer', 'pointer:mouse', 'moves:9', 'grid:0.00']);
+  // Whole numbers at a 125% display are a script that rounded its coordinates: only a quarter land on the grid.
+  const rounded = { dpr: 1.25, heights: [797, 706], points: Array.from({ length: 20 }, (_, i) => [300 + i + 0.6, 400.6]) };
+  assert.equal(humanReport({ ...HUMAN, ...rounded }, edge).automated, true);
+  // On the grid of a 250% display zoomed out to 50%: allowed only when the window could hold such a page.
+  const half = { ...rounded, points: Array.from({ length: 20 }, (_, i) => [301.6 + 2 * i, 401.6]) };
+  assert.equal(humanReport({ ...HUMAN, ...half, heights: [797, 1400] }, edge).automated, false);
+  assert.equal(humanReport({ ...HUMAN, ...half }, edge).automated, true);
+  for (const ua of [firefox, mac]) assert.equal(humanReport({ ...HUMAN, ...scripted }, ua).automated, false, ua);
+  for (const bad of [{ dpr: 0 }, { dpr: '1.25' }, { points: [[1, 2, 3]] }, { points: 'x' }, { ...scripted, points: scripted.points.slice(0, 9) }]) {
+    assert.equal(humanReport({ ...HUMAN, ...scripted, ...bad }, edge).automated, false, JSON.stringify(bad).slice(0, 40));
+  }
   // The DevTools protocol's touch emulation on a PC without a touchscreen, or on a Mac. Real touchscreens report 5+.
   const touch = { ...HUMAN, pointer: 'touch', path: [], pressGap: -1 };
   assert.deepEqual(humanReport({ ...touch, env: { touch: 1 } }, edge).notes.slice(0, 1), ['emulated_touch']);
@@ -172,6 +191,7 @@ test('scripted input on Windows is caught: unpredicted moves, emulated touch and
   const f = await fixture(t);
   const cases = [
     [{ input: [40, 0] }, 'automation_detected'],
+    [{ ...scripted, input: [40, 38] }, 'automation_detected'],
     [{ ...touch, env: { touch: 1 } }, 'automation_detected'],
     [{ ...keyboard, repeats: 0 }, 'human_check_failed'],
   ];

@@ -38,13 +38,15 @@ const $_touched = $_Error => {
 // PREDICTED_MIN_MOVES on the server). Counted here, inside this check's own script, from the moment it loads.
 const $_pointerProto = $_g[$S('PointerEvent')]?.[$S('prototype')];
 const $_predict = $_pointerProto?.[$S('getPredictedEvents')];
-const $_input = [0, 0];
+const $_input = [0, 0], $_points = [];
 let $_lastMove = null;
 $_g[$S('addEventListener')]($S('pointermove'), $_event => {
   if (!$_event[$S('isTrusted')] || $_event[$S('pointerType')] !== $S('mouse')) return;
   const $_at = $_event[$S('clientX')] + ',' + $_event[$S('clientY')];
   if ($_at === $_lastMove) return; // Browsers re-send the position after layout changes.
   $_lastMove = $_at; $_input[0]++;
+  // Where on the screen, for the pixel-grid check (pixelGridShare on the server).
+  $_points.push([$_event[$S('screenX')], $_event[$S('screenY')]]); if ($_points.length > 64) $_points.shift();
   try { if ($_predict && $_predict[$S('call')]($_event)[$S('length')] > 0) $_input[1]++; } catch {}
 }, { capture: true, passive: true });
 
@@ -151,7 +153,7 @@ export default function $_start() {
       return $_seal({ ...$_gesture,
         [$S('webdriver')]: $_nav[$S('webdriver')] === true, [$S('automationGlobals')]: $_globals(), [$S('hooked')]: $_hooked(), [$S('devtools')]: $_ratio, [$S('worker')]: $_workerReport, [$S('touched')]: $_touch,
         [$S('frame')]: [$_g.outerWidth - $_g.innerWidth, $_g.outerHeight - $_g.innerHeight], [$S('plugins')]: $_nav[$S('plugins')]?.length ?? -1,
-        [$S('brands')]: $_brands, [$S('engine')]: $_engine(), [$S('input')]: [...$_input], [$S('env')]: $_env });
+        [$S('brands')]: $_brands, [$S('engine')]: $_engine(), [$S('input')]: [...$_input], [$S('points')]: [...$_points], [$S('dpr')]: $_g[$S('devicePixelRatio')], [$S('heights')]: [$_g.outerHeight, $_g.innerHeight], [$S('env')]: $_env });
     },
   };
 }
