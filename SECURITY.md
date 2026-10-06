@@ -1,6 +1,6 @@
 # Security policy
 
-Human Gate is a pre-audit prototype. Do not use it as the only protection for sensitive data.
+Voight is a pre-audit prototype. Do not use it as the only protection for sensitive data.
 
 ## Reporting a vulnerability
 

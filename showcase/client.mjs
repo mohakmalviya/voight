@@ -42,7 +42,7 @@ for (const scenario of evidence.http.scenarios) {
 }
 document.querySelector('#download').addEventListener('click', () => {
   const url = URL.createObjectURL(new Blob([JSON.stringify(evidence, null, 2)], { type: 'application/json' }));
-  const anchor = document.createElement('a'); anchor.href = url; anchor.download = 'human-gate-evidence.json'; anchor.click();
+  const anchor = document.createElement('a'); anchor.href = url; anchor.download = 'voight-evidence.json'; anchor.click();
   setTimeout(() => URL.revokeObjectURL(url), 1000);
 });
 selectCase('headless');

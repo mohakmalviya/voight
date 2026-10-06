@@ -30,7 +30,7 @@ export async function start(config = configFromEnv()) {
   server.once('close', () => { store.close(); monitor?.close(); });
   await new Promise((resolve, reject) => { server.once('error', reject); server.listen(config.port, config.host, resolve); });
   if (monitor) await new Promise((resolve, reject) => { monitor.once('error', reject); monitor.listen(config.metricsPort, '127.0.0.1', resolve); });
-  console.log(`Human Gate (${config.mode} mode) listening at ${config.origin}${config.policy.length ? `, ${config.policy.length} policy rules` : ''}${monitor ? `, metrics at http://127.0.0.1:${config.metricsPort}/metrics` : ''}`);
+  console.log(`Voight (${config.mode} mode) listening at ${config.origin}${config.policy.length ? `, ${config.policy.length} policy rules` : ''}${monitor ? `, metrics at http://127.0.0.1:${config.metricsPort}/metrics` : ''}`);
   return server;
 }
 

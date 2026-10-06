@@ -166,7 +166,7 @@ test('the operator\'s contact appears on gate pages, with the reference filled i
   const f = await fixture(t, {}, { CONTACT: 'admin@example.com' });
   const page = await get(f, '/article', visitor('203.0.113.10', { accept: 'text/html' }));
   const reference = /Reference <code>([\w-]+)<\/code>/.exec(page.text)[1];
-  assert.match(page.text, new RegExp(`<a href="mailto:admin@example.com\\?subject=Human%20Gate%20reference%20${reference}">Contact the operator</a>`));
+  assert.match(page.text, new RegExp(`<a href="mailto:admin@example.com\\?subject=Voight%20reference%20${reference}">Contact the operator</a>`));
   const refused = await get(f, '/a', visitor('203.0.113.10', { accept: 'text/html', 'user-agent': 'GPTBot/1.2' }));
   assert.match(refused.text, /If this keeps happening, <a href="mailto:admin@example.com\?subject=[^"]+">contact this website’s operator<\/a>/);
   assert.equal(configFromEnv({ CONTACT: 'https://example.com/contact' }).contact, 'https://example.com/contact');
@@ -179,10 +179,10 @@ test('metrics count decisions and signal names, never values or visitors', async
   metrics.record({ status: 403, reason: 'automation_detected', chargedBytes: 0, automationSignals: ['webdriver', 'moves:40', 'devtools:5.4', 'Odd Note', 'moves:12'] });
   metrics.record({ status: 200, reason: 'admitted', chargedBytes: 1200, automationSignals: [] });
   const text = metrics.render();
-  assert.match(text, /human_gate_requests_total\{status="403",reason="automation_detected"\} 1/);
-  assert.match(text, /human_gate_requests_total\{status="200",reason="admitted"\} 1/);
-  assert.match(text, /human_gate_signals_total\{signal="moves"\} 1/);
-  assert.match(text, /human_gate_charged_bytes_total 1200/);
+  assert.match(text, /voight_requests_total\{status="403",reason="automation_detected"\} 1/);
+  assert.match(text, /voight_requests_total\{status="200",reason="admitted"\} 1/);
+  assert.match(text, /voight_signals_total\{signal="moves"\} 1/);
+  assert.match(text, /voight_charged_bytes_total 1200/);
   assert.doesNotMatch(text, /Odd|5\.4/);
   const server = metricsServer(metrics).listen(0, '127.0.0.1'); await once(server, 'listening'); t.after(() => server.close());
   const base = `http://127.0.0.1:${server.address().port}`;

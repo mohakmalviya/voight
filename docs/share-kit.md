@@ -1,8 +1,8 @@
-# Share Human Gate without publishing the repository
+# Share Voight without publishing the repository
 
 ## The demo
 
-`npm run showcase` generates `dist/human-gate-demo.html`: a single file with embedded styles, scripts and measured reports. Open it in a browser or send it to an evaluator. It needs no server, external fonts, analytics, credentials or repository access. Research links open only when clicked. The demonstration shows recorded evidence; it is not a live protection service.
+`npm run showcase` generates `dist/voight-demo.html`: a single file with embedded styles, scripts and measured reports. Open it in a browser or send it to an evaluator. It needs no server, external fonts, analytics, credentials or repository access. Research links open only when clicked. The demonstration shows recorded evidence; it is not a live protection service.
 
 To regenerate evidence, run both benchmarks first and save their JSON reports in `docs/`. To record the demo and check desktop/mobile behavior:
 
@@ -15,7 +15,7 @@ The recording and screenshots go to `dist/showcase-artifacts`. Use the `.webm` w
 
 ## Short introduction
 
-I'm building Human Gate, a self-hosted gateway for websites that want more control over automated access. It combines invitation-based passkeys, optional checks for declared browser automation, and download limits that follow a credential across sessions. The demo shows reproducible tests and an important limitation: an approved automated browser can hide its signals and get through, while extraction limits still constrain it. I'm looking for a few technical evaluators to try the passkey flow, test their own browser workflows, and identify compatibility or accessibility problems before a public release.
+I'm building Voight, a self-hosted gateway for websites that want more control over automated access. It combines invitation-based passkeys, optional checks for declared browser automation, and download limits that follow a credential across sessions. The demo shows reproducible tests and an important limitation: an approved automated browser can hide its signals and get through, while extraction limits still constrain it. I'm looking for a few technical evaluators to try the passkey flow, test their own browser workflows, and identify compatibility or accessibility problems before a public release.
 
 ## Ninety-second walkthrough
 

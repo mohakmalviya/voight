@@ -1,6 +1,6 @@
 # Contributing
 
-Thanks for helping. Human Gate is a small project, and changes are judged on whether they keep the security properties honest and testable.
+Thanks for helping. Voight is a small project, and changes are judged on whether they keep the security properties honest and testable.
 
 ## Before you start
 

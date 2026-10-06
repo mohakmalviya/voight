@@ -374,7 +374,7 @@ export function createGateway({ config, store, assets, auth = webauthn(config), 
         if (config.automationPolicy !== 'off') signals = automationSignals(ua, admitted.webdriver);
         const automated = automationDecision(config.automationPolicy, ua, admitted.webdriver);
         if (automated) throw new Denied(403, automated);
-        subject = admitted.credential_id; scope = 'credential'; identity = { 'x-human-gate-user': subject };
+        subject = admitted.credential_id; scope = 'credential'; identity = { 'x-voight-user': subject };
       }
       if (!store.limit(`reader:${subject}`, config.requestsPerMinute)) throw new Denied(429, 'reader_rate');
       const active = activeTransfers.get(subject) ?? 0;
@@ -397,7 +397,7 @@ export function createGateway({ config, store, assets, auth = webauthn(config), 
       const upstream = await fetch(target, {
         method: req.method, redirect: 'manual', signal: proxySignal,
         headers: {
-          accept: req.headers.accept ?? '*/*', 'user-agent': 'HumanGate/0.10', ...identity,
+          accept: req.headers.accept ?? '*/*', 'user-agent': 'Voight/0.10', ...identity,
           ...(req.headers['accept-language'] ? { 'accept-language': req.headers['accept-language'] } : {}),
           ...(range ? { range, ...(req.headers['if-range'] ? { 'if-range': req.headers['if-range'] } : {}) } : {}),
         },

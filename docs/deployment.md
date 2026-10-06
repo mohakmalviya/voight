@@ -4,7 +4,7 @@ This prototype is ready for local evaluation and careful pilots. Do not treat th
 
 ## Both modes
 
-1. **Keep the origin private.** Firewall it so only the gateway can connect. Test direct-origin access from outside that network; it must fail. In private mode, the `x-human-gate-user` header sent upstream is not cryptographically authenticated and is safe only behind this boundary.
+1. **Keep the origin private.** Firewall it so only the gateway can connect. Test direct-origin access from outside that network; it must fail. In private mode, the `x-voight-user` header sent upstream (named `x-human-gate-user` before 0.10.1) is not cryptographically authenticated and is safe only behind this boundary.
 2. **Terminate HTTPS at a reverse proxy** configured to preserve the public `Host`. Set `PUBLIC_ORIGIN` to the exact browser-facing origin. Bind the gateway to loopback or a private interface.
 3. **Set `TRUSTED_PROXIES`** to the exact addresses or CIDR ranges of the proxies directly in front of the gateway, and make sure those proxies *append* the client address to `X-Forwarded-For`. Without it, all visitors share the proxy's budget, and one bad client can get everyone blocked. With a range that is too broad, clients inside it can pick their own identity. If you use a CDN, list only its published egress ranges, and update the list when those change.
 4. **Route every content path through the gateway.** `/_gate/` is reserved for gateway pages and endpoints. Do not let a CDN cache proxied responses or serve origin assets directly; either bypasses budget accounting. Proxied responses are sent `Cache-Control: private` for this reason.

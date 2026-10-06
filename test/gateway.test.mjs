@@ -19,11 +19,11 @@ test('unauthenticated paths and forged cookies never reach upstream', async t =>
 });
 test('real signed WebAuthn registration admits a reader; secrets do not cross proxy', async t => {
   const f = await fixture(t); const session = await f.enroll();
-  const response = await f.request('/private', { headers: { cookie: session, authorization: 'Bearer secret', 'x-human-gate-user': 'forged', 'x-forwarded-for': '1.1.1.1' } });
+  const response = await f.request('/private', { headers: { cookie: session, authorization: 'Bearer secret', 'x-voight-user': 'forged', 'x-forwarded-for': '1.1.1.1' } });
   assert.equal(response.status, 200); assert.equal(await response.text(), 'PRIVATE_ORIGIN_CONTENT');
   assert.equal(response.headers.get('set-cookie'), null); assert.match(response.headers.get('cache-control'), /no-store/);
   assert.equal(f.lastHeaders().cookie, undefined); assert.equal(f.lastHeaders().authorization, undefined);
-  assert.equal(f.lastHeaders()['x-forwarded-for'], undefined); assert.equal(f.lastHeaders()['x-human-gate-user'], f.auth.id);
+  assert.equal(f.lastHeaders()['x-forwarded-for'], undefined); assert.equal(f.lastHeaders()['x-voight-user'], f.auth.id);
 });
 test('registration invitation is single-use and challenges cannot be replayed', async t => {
   const f = await fixture(t); const invite = f.store.invite('reader');

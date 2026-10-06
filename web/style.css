@@ -1,4 +1,4 @@
-/* Human Gate pages: one centred panel. Light and dark follow the visitor's system setting. */
+/* Voight pages: one centred panel. Light and dark follow the visitor's system setting. */
 :root{color-scheme:light dark;font-family:Inter,ui-sans-serif,system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,"Helvetica Neue",Arial,sans-serif;font-synthesis:none;-webkit-font-smoothing:antialiased;
   --bg:#f3f5f0;--glow:#d7ecc066;--dot:#1a2a141a;--panel:#fff;--panel-2:#f6f8f3;--border:#e1e6db;--border-strong:#cbd3c3;
   --text:#141b14;--muted:#535e52;--faint:#7b8679;

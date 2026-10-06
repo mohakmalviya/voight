@@ -38,7 +38,7 @@ export function previewReader({ config, fetchImpl = fetch, now = Date.now }) {
   async function read(pathAndQuery) {
     const target = new URL(config.upstream); const page = new URL(pathAndQuery, config.origin);
     target.pathname = page.pathname; target.search = page.search;
-    const response = await fetchImpl(target, { redirect: 'manual', headers: { accept: 'text/html', 'user-agent': 'HumanGate/0.10' }, signal: AbortSignal.timeout(3000) });
+    const response = await fetchImpl(target, { redirect: 'manual', headers: { accept: 'text/html', 'user-agent': 'Voight/0.10' }, signal: AbortSignal.timeout(3000) });
     if (response.status !== 200 || !/text\/html|application\/xhtml/i.test(response.headers.get('content-type') ?? '')) { await response.body?.cancel(); return []; }
     let html = '', bytes = 0; const decoder = new TextDecoder();
     for await (const chunk of response.body) {

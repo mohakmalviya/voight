@@ -1,4 +1,6 @@
-# Human Gate
+# Voight
+
+Named after the Voight-Kampff test in *Blade Runner*, which tells people from replicants.
 
 A self-hosted gateway that sits in front of a website, keeps AI agents and automated browsers out, and makes bulk extraction slow and expensive. Visitors confirm they are human with one press-and-hold a day: no accounts, no image puzzles.
 
@@ -6,7 +8,7 @@ A self-hosted gateway that sits in front of a website, keeps AI agents and autom
 
 ## How it works
 
-Human Gate is a reverse proxy. Every request for your site passes through it, and it decides whether to fetch the page from your origin.
+Voight is a reverse proxy. Every request for your site passes through it, and it decides whether to fetch the page from your origin.
 
 **Public mode** (default): any person can browse.
 
@@ -20,7 +22,7 @@ Human Gate is a reverse proxy. Every request for your site passes through it, an
 8. **Your own rules.** `POLICY_FILE` names a JSON list of rules that allow, deny or always check requests by path, user agent, header or network, checked before anything else ([example](docs/policy.example.json)). Budgets and blocks still apply to allowed requests. Anyone can copy a user agent, so allow networks rather than user agents.
 9. **Link previews, if you want them.** With `OPEN_GRAPH=on`, chat and social apps that fetch a shared link get the check page carrying that page's own title, description and preview image, so the link still shows a card; the page itself stays behind the check.
 
-Ideas 7 to 9, and the open `/.well-known/` files, come from [Anubis](https://github.com/TecharoHQ/anubis), an open-source proxy that slows AI crawlers down with proof-of-work. Human Gate aims further: it tries to refuse automated browsers outright, not only make them pay. Set `CONTACT` to show refused people how to reach you, and `METRICS_PORT` for Prometheus counters on loopback.
+Ideas 7 to 9, and the open `/.well-known/` files, come from [Anubis](https://github.com/TecharoHQ/anubis), an open-source proxy that slows AI crawlers down with proof-of-work. Voight aims further: it tries to refuse automated browsers outright, not only make them pay. Set `CONTACT` to show refused people how to reach you, and `METRICS_PORT` for Prometheus counters on loopback.
 
 **Private mode** (`MODE=private`): content is only for invited people. Each person enrols a passkey with a one-time invitation, and every request needs a short passkey-backed session. Budgets apply per credential.
 
@@ -64,10 +66,10 @@ For private mode, start the demo with `MODE=private`, then create an invitation 
 
 ## Add it to your website
 
-Human Gate runs as a reverse proxy between your HTTPS front end and your site. The site itself needs no code changes:
+Voight runs as a reverse proxy between your HTTPS front end and your site. The site itself needs no code changes:
 
 ```
-Visitor → HTTPS proxy (nginx, Caddy, Cloudflare…) → Human Gate :8787 → your site (private address)
+Visitor → HTTPS proxy (nginx, Caddy, Cloudflare…) → Voight :8787 → your site (private address)
 ```
 
 ### Is your site a fit today?
@@ -86,7 +88,7 @@ These are on the [roadmap](docs/roadmap.md).
 ### Steps
 
 1. **Move your site to a private address**, for example `127.0.0.1:8788` or an internal IP. Firewall it so only the gateway can reach it. If scrapers can reach the site directly, they bypass every check.
-2. **Configure and start Human Gate:**
+2. **Configure and start Voight:**
 
    ```sh
    git clone https://github.com/mohakmalviya/human-gate.git
