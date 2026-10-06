@@ -95,6 +95,20 @@ export const KEY_REPEAT_HOLD_MS = 1200;
 export const INTERCEPTION_RATIO = 2;
 export const INTERCEPTION_MIN_MS = 0.3;
 
+// Firefox on Windows stamps a mouse move with the time of the Windows message it came from, which counts in system
+// clock ticks of 15.6 ms, so the time from that stamp to the page's handler wanders over most of a tick: the middle half
+// of a person's moves spread over 9 to 10 ms, and any 16 moves in a row over 5 ms or more (Firefox 157, slow and fast
+// moves; 4 or 5 ms over a whole sample from a tool that moves the cursor right on each tick). Moves that Playwright's
+// Firefox makes through Juggler, the protocol Camoufox uses too, carry the time they were made: 0 to 2 ms, the middle
+// half within 1 ms, headed or headless, paused or not. Judged only with a clock of 1 ms or finer (resistFingerprinting
+// coarsens it, and also claims Windows on every system), and only on Windows: elsewhere real moves carry exact times.
+export const EVENT_TIME_MIN_MOVES = 16;
+export const EVENT_TIME_MAX_SPREAD_MS = 2;
+export function lagSpread(lags) {
+  const sorted = [...lags].sort((a, b) => a - b);
+  return sorted[Math.floor(sorted.length * 3 / 4)] - sorted[Math.floor(sorted.length / 4)];
+}
+
 // What the human-check page reports. Every field is client-controlled, so missing or malformed values count against it.
 // `returned` says whether this check's page came back from the hop page without loading again (null: not judged).
 export function humanReport(report, userAgent = '', { returned = null } = {}) {
@@ -143,6 +157,12 @@ export function humanReport(report, userAgent = '', { returned = null } = {}) {
     && Number.isSafeInteger(value.fetches[2]) && value.fetches[2] >= 4 && value.fetches[1] > 0 ? value.fetches : null;
   const held = fetches ? fetches[0] / fetches[1] : null;
   if (held !== null && chromium && windowsDesktop(userAgent) && held >= INTERCEPTION_RATIO && (fetches[0] - fetches[1]) / fetches[2] >= INTERCEPTION_MIN_MS) found.push('request_interception');
+  // How long each of the last 64 mouse moves took from its time stamp to the page's handler, and the clock's step.
+  const lags = (Array.isArray(value.lags) ? value.lags.slice(-64) : []).filter(lag => Number.isFinite(lag) && lag > -1 && lag < 60000);
+  const clock = Number.isFinite(value.clock) ? value.clock : null;
+  const gecko = value.engine === 'gecko' || (/Firefox\//.test(userAgent) && value.engine !== 'chromium');
+  const spread = gecko && clock !== null && clock > 0 && clock <= 1.5 && lags.length >= EVENT_TIME_MIN_MOVES ? lagSpread(lags) : null;
+  if (spread !== null && pointer === 'mouse' && windowsDesktop(userAgent) && spread <= EVENT_TIME_MAX_SPREAD_MS) found.push('synthetic_event_time');
   const repeats = Number.isSafeInteger(value.repeats) && value.repeats >= 0 ? value.repeats : 0;
   const unrepeated = pointer === 'keyboard' && windowsDesktop(userAgent) && holdMs >= KEY_REPEAT_HOLD_MS && repeats === 0;
   const gap = value.pressGap, final = path.at(-1);
@@ -160,7 +180,8 @@ export function humanReport(report, userAgent = '', { returned = null } = {}) {
     unrepeated,
     notes: [...found, ...(unrepeated ? ['no_key_repeat'] : []), `pointer:${pointer}`, `moves:${path.length ? path.length + 1 : 0}`,
       ...(input && pointer === 'mouse' ? [`predicted:${input[1]}/${input[0]}`] : []), ...(grid !== null && pointer === 'mouse' ? [`grid:${grid.toFixed(2)}`] : []), ...(pointer === 'keyboard' ? [`repeats:${repeats}`] : []),
-      ...(devtools === null ? [] : [`devtools:${devtools.toFixed(2)}`]), ...(worker === null ? [] : [`worker:${worker.toFixed(2)}`]), ...(held === null ? [] : [`fetches:${held.toFixed(2)}`])],
+      ...(devtools === null ? [] : [`devtools:${devtools.toFixed(2)}`]), ...(worker === null ? [] : [`worker:${worker.toFixed(2)}`]), ...(held === null ? [] : [`fetches:${held.toFixed(2)}`]),
+      ...(spread !== null && pointer === 'mouse' ? [`lag-spread:${+spread.toFixed(1)}/${lags.length}`] : [])],
   };
 }
 

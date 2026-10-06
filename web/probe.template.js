@@ -38,7 +38,7 @@ const $_touched = $_Error => {
 // PREDICTED_MIN_MOVES on the server). Counted here, inside this check's own script, from the moment it loads.
 const $_pointerProto = $_g[$S('PointerEvent')]?.[$S('prototype')];
 const $_predict = $_pointerProto?.[$S('getPredictedEvents')];
-const $_input = [0, 0], $_points = [];
+const $_input = [0, 0], $_points = [], $_lags = [];
 let $_lastMove = null;
 $_g[$S('addEventListener')]($S('pointermove'), $_event => {
   if (!$_event[$S('isTrusted')] || $_event[$S('pointerType')] !== $S('mouse')) return;
@@ -47,6 +47,8 @@ $_g[$S('addEventListener')]($S('pointermove'), $_event => {
   $_lastMove = $_at; $_input[0]++;
   // Where on the screen, for the pixel-grid check (pixelGridShare on the server).
   $_points.push([$_event[$S('screenX')], $_event[$S('screenY')]]); if ($_points.length > 64) $_points.shift();
+  // How long after its own time stamp the move reached this handler (EVENT_TIME_MIN_MOVES on the server).
+  $_lags.push(+($_now() - $_event[$S('timeStamp')]).toFixed(1)); if ($_lags.length > 64) $_lags.shift();
   try { if ($_predict && $_predict[$S('call')]($_event)[$S('length')] > 0) $_input[1]++; } catch {}
 }, { capture: true, passive: true });
 
@@ -58,6 +60,18 @@ const $_hooked = () => $_con[$S('debug')] !== $_debug || $_perf[$S('now')] !== $
 const $_globals = () => [$S('__playwright__binding__'), $S('__pwInitScripts'), $S('_selenium'), $S('callSelenium'), $S('__webdriver_evaluate'),
   $S('__selenium_evaluate'), $S('__nightmare'), $S('domAutomation'), $S('domAutomationController'), $S('callPhantom'), $S('_phantom')].some($_name => $_name in $_g)
   || Object.keys($_doc).some($_key => $_key.startsWith($S('$cdc_')) || $_key.startsWith($S('cdc_')));
+
+// The smallest step performance.now() takes: 1 ms or less, unless the browser coarsens its clock (resistFingerprinting
+// does), which hides the move timing above.
+const $_clockStep = () => {
+  const $_limit = Date.now() + 250; let $_last = $_now(), $_step = Infinity;
+  for (let $_steps = 0; $_steps < 4 && Date.now() < $_limit;) {
+    const $_time = $_now(); if ($_time === $_last) continue;
+    if ($_steps++) $_step = Math.min($_step, $_time - $_last); // The first change only lines up with the clock.
+    $_last = $_time;
+  }
+  return Number.isFinite($_step) ? +$_step.toFixed(3) : null;
+};
 
 // Which engine runs the page, whatever the user agent says: Firefox keeps navigator.buildID and -moz- styles, Chromium
 // has userAgentData or window.chrome.
@@ -180,7 +194,8 @@ export default function $_start() {
       return $_seal({ ...$_gesture,
         [$S('webdriver')]: $_nav[$S('webdriver')] === true, [$S('automationGlobals')]: $_globals(), [$S('hooked')]: $_hooked(), [$S('devtools')]: $_ratio, [$S('worker')]: $_workerReport, [$S('touched')]: $_touch,
         [$S('frame')]: [$_g.outerWidth - $_g.innerWidth, $_g.outerHeight - $_g.innerHeight], [$S('plugins')]: $_nav[$S('plugins')]?.length ?? -1,
-        [$S('brands')]: $_brands, [$S('engine')]: $_engine(), [$S('input')]: [...$_input], [$S('points')]: [...$_points], [$S('dpr')]: $_g[$S('devicePixelRatio')], [$S('heights')]: [$_g.outerHeight, $_g.innerHeight], [$S('fetches')]: $_fetched, [$S('env')]: $_env });
+        [$S('brands')]: $_brands, [$S('engine')]: $_engine(), [$S('input')]: [...$_input], [$S('points')]: [...$_points], [$S('dpr')]: $_g[$S('devicePixelRatio')], [$S('heights')]: [$_g.outerHeight, $_g.innerHeight], [$S('fetches')]: $_fetched,
+        [$S('lags')]: [...$_lags], [$S('clock')]: $_clockStep(), [$S('env')]: $_env });
     },
   };
 }

@@ -584,6 +584,42 @@ test('a check page loaded again straight after its hop is refused as automation'
   assert.match((await navigate(f, '/mine', { ...visitor('203.0.113.60', { 'user-agent': `${FIREFOX} Other` }), ...LOAD, cookie: theirs.cookie })).text, /Confirm you are human/);
 });
 
+test('Firefox moves made through Juggler are caught on Windows: they reach the page as soon as they are stamped', async t => {
+  // Milliseconds from each move's time stamp to the page's handler, measured in Firefox 157 on Windows.
+  const hand = [1, 1, 15, 6, 1, 15, 6, 6, 14, 11, 9, 16, 9, 16, 14, 4, 12, 11, 6, 14, 7, 4, 15, 11, 4, 0, 10, 3, 14, 9, 0, 10, 5, 2, 14, 9, 7, 14, 12, 2, 14, 11, 6, 16, 6, 3, 23];
+  const slow = [7, 15, 8, 2, 9, 3, 11, 3, 12, 5, 13, 7, 16, 8, 17, 9, 1, 10, 3, 12, 5, 13, 16, 8, 0, 9, 3, 10, 4, 13, 4, 14, 7, 15, 7, 1, 10, 2, 11, 3, 11, 5, 13, 6, 15, 7, 2, 11, 2, 11, 4, 13, 5, 13, 6, 13, 7, 16, 7, 1, 9, 4, 13, 15];
+  const jumps = [7, 11, 13, 6, 7, 5, 1, 3, 4, 6, 14, 0, 2, 5, 11, 15, 0, 2, 12, 12, 0, 10]; // The cursor set every 50 ms.
+  const onTick = [0, 10, 8, 7, 14, 11, 8, 8, 13, 10, 10, 6, 8, 8, 6, 6, 7, 7, 6, 6, 7, 5, 5, 6, 5, 4, 5, 4, 4, 4, 4, 4, 3, 2, 3, 3, 5, 5, 4, 5, 5, 3, 5, 4, 4, 3, 2, 2, 2, 1, 1, 1, 1, 1, 0, 1, 0, 1, 1, 1, 1, 12];
+  // Playwright's Firefox, headed and headless, without pauses.
+  const headed = [1, 0, 1, 0, 0, 1, 0, 1, 1, 1, 1, 1, 2, 1, 0, 0, 0, 1, 1, 1, 0, 0, 1, 0, 0, 1, 1, 1, 0, 1, 0, 2, 1, 1, 0, 1, 0, 0];
+  const headless = [5, 6, 5, 5, 5, 6, 6, 6, 5, 6, 6, 6, 5, 6, 6, 5, 5, 5, 7, 5, 5, 5, 5, 5, 6, 5, 6, 5, 5, 6, 6, 5, 5, 6, 5, 5, 6, 5];
+  const firefox = { ...HUMAN, brands: '', engine: 'gecko', clock: 1 };
+  for (const lags of [hand, slow, jumps, onTick]) assert.equal(humanReport({ ...firefox, lags }, FIREFOX).automated, false, String(lags));
+  assert.deepEqual(humanReport({ ...firefox, lags: headed }, FIREFOX).notes, ['synthetic_event_time', 'pointer:mouse', 'moves:9', 'lag-spread:1/38']);
+  assert.equal(humanReport({ ...firefox, lags: headless }, FIREFOX).automated, true);
+  assert.equal(humanReport({ ...firefox, lags: headless.slice(0, 15) }, FIREFOX).automated, false); // Too few moves to judge.
+  // Not judged where real moves carry exact times, on a coarsened clock, for Chromium, or for other pointers.
+  const mac = 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10.15; rv:143.0) Gecko/20100101 Firefox/143.0';
+  assert.equal(humanReport({ ...firefox, lags: headed }, mac).automated, false);
+  for (const clock of [16.667, 100, null, 0]) assert.equal(humanReport({ ...firefox, lags: headed, clock }, FIREFOX).automated, false, String(clock));
+  assert.equal(humanReport({ ...HUMAN, lags: headed, clock: 0.005 }, WINDOWS).automated, false);
+  assert.equal(humanReport({ ...firefox, lags: headed, pointer: 'touch' }, FIREFOX).automated, false);
+  // The engine decides, not the name: Firefox claiming to be Chrome on Windows is judged too.
+  assert.equal(humanReport({ ...firefox, lags: headed }, WINDOWS).automated, true);
+  assert.equal(humanReport({ ...firefox, lags: [...headed.slice(0, 10), 'x', null, -5, ...headed.slice(10)] }, FIREFOX).notes.at(-1), 'lag-spread:1/38');
+
+  const f = await fixture(t);
+  const id = hopID(), scripted = visitor('203.0.113.80', { 'user-agent': FIREFOX });
+  assert.equal((await hopTo(f, id, '/', scripted)).status, 200);
+  const refused = await check(f, { headers: scripted, hop: id, signals: { brands: '', engine: 'gecko', clock: 1, lags: headed } });
+  assert.equal(await errorOf(refused), 'automation_detected');
+  assert.ok(f.audit.at(-1).automationSignals.includes('synthetic_event_time'));
+  const other = hopID(), person = visitor('198.51.100.81', { 'user-agent': FIREFOX });
+  assert.equal((await hopTo(f, other, '/', person)).status, 200);
+  const passed = await check(f, { headers: person, hop: other, signals: { brands: '', engine: 'gecko', clock: 1, lags: hand } });
+  assert.equal(passed.status, 200, await passed.clone().text());
+});
+
 test('the hop page takes only the check page’s own step', async t => {
   const f = await fixture(t);
   const firefox = visitor('203.0.113.70', { 'user-agent': FIREFOX });
