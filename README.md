@@ -188,19 +188,89 @@ npm run admin -- list | usage | revoke <credential-id>
 
 The human check reads pointer movement, browser traits and machine traits (GPU name, a rendered test image, whether a few system fonts exist, how many speech voices and media devices there are, screen and taskbar size, time zone) in the browser and sends them once. The server scores them and keeps only the names of the flags it found, such as `software_gpu`, in the log. Raw values are never stored, and nothing is used to recognise a visitor later. Network addresses are stored only as keyed hashes. URLs are stored as keyed hashes for budget counting and never in plain text. Logs record a random request ID, status, decision reason and byte count. They never record IPs, URLs, user agents or cookies. The optional metrics hold only counts of decisions and signal names. With `OPEN_GRAPH=on`, the preview tags of pages that preview clients asked for are kept in memory for `OPEN_GRAPH_SECONDS`. Expired records are deleted every minute.
 
-## Development
+## Contributing
+
+Contributions are welcome. Voight is a small project, and every change is judged on one question: does it keep the security claims honest and testable?
+
+### Before you start
+
+- For anything bigger than a small fix, open an issue first so the approach is agreed before you write code.
+- **Never report a security problem in a public issue.** Follow [SECURITY.md](SECURITY.md) instead.
+- Read the [threat model](docs/threat-model.md). A change that adds protection must say which attack it stops and what still gets through.
+
+### Set up
+
+You need Node.js 24.14 or newer.
+
+```sh
+git clone https://github.com/mohakmalviya/human-gate.git
+cd human-gate
+npm ci
+npm run build
+npm run demo             # the gateway on http://localhost:8787 in front of a sample site
+```
+
+### Run the checks
 
 ```sh
 npm run check            # syntax
 npm test                 # unit and integration tests (loopback only)
 npm run benchmark        # HTTP extraction scenarios
+npm run build            # bundles web/ into dist/
 npm run browser:install && npm run benchmark:browser   # real Chromium, virtual passkeys
 npm run attack:agents    # automated browsers against the human check (opens real windows)
 ```
 
-Layout: `src/` gateway, storage, network handling and WebAuthn; `web/` visitor pages and the proof-of-work client; `test/` regression tests; `scripts/` build, demo and benchmarks; `showcase/` offline evidence demo; `docs/` design notes.
+CI runs all of these except `attack:agents` on every pull request, plus the showcase check and `npm audit`. Run `attack:agents` yourself when you change the human check.
 
-See [CONTRIBUTING.md](CONTRIBUTING.md). Report vulnerabilities privately as described in [SECURITY.md](SECURITY.md).
+### Where things live
+
+| Path | What it does |
+| --- | --- |
+| `src/main.mjs` | Starts the gateway: reads settings, loads rules and opens the store |
+| `src/config.mjs` | Every setting, its default and its validation |
+| `src/gateway.mjs` | The request pipeline: rate limits, operator rules, AI-agent refusal, the human check, proxying and byte budgets |
+| `src/automation.mjs` | Scores the human check's report for signs of automation (`webdriver`, `synthetic_pointer`, …) |
+| `src/sandbox.mjs` | Scores signs of a browser running on a server (datacenter address, software GPU, no sound card or screen) |
+| `src/agents.mjs` | AI crawlers and assistants that name themselves |
+| `src/network.mjs` | Addresses, CIDR ranges and trusted proxies |
+| `src/store.mjs` | SQLite storage: passes, budgets, blocks, invitations and passkeys |
+| `src/denial.mjs` | HTML for the check, block and error pages |
+| `src/scramble.mjs` | Gives every check its own scrambled copy of the browser probe |
+| `src/policy.mjs`, `src/preview.mjs`, `src/metrics.mjs` | Operator rules, link previews and Prometheus counters |
+| `src/webauthn.mjs`, `src/admin.mjs` | Passkeys for private mode, and the `npm run admin` command |
+| `web/human.mjs` | The press-and-hold check in the visitor's browser |
+| `web/probe.template.js`, `web/probe-worker.template.js`, `web/shared.js` | What the check measures in the page, in a worker and in a shared worker |
+| `web/hop.mjs`, `web/challenge.mjs`, `web/client.mjs` | The hop page, the proof-of-work client and private-mode sign-in |
+| `test/` | Tests. `fixture.mjs` runs a gateway and a sample site on loopback |
+| `scripts/` | Build, demo, benchmarks and attack runs |
+| `showcase/`, `docs/` | The offline evidence demo, and design notes, benchmark results and research |
+
+### Adding or changing a detection
+
+Most changes add or tune a signal. The usual path:
+
+1. Measure it in the browser in `web/probe.template.js` and add it to the report. Wrap strings in `$S('…')` so the scrambler hides them.
+2. Turn it into a named flag in `humanReport` (`src/automation.mjs`) or `sandboxReport` (`src/sandbox.mjs`). Validate and clamp every reported value: a client can send anything.
+3. Add tests in `test/human.test.mjs`: one where the flag fires, and one showing a normal browser's report does not trip it.
+4. Try it against real tools with `npm run attack:agents`, and against ordinary Chrome, Edge, Firefox and Safari. Say in the pull request which you tried and any false positives you saw.
+5. Add a row to the [threat model](docs/threat-model.md) saying what it catches and what gets around it.
+
+### Rules for every change
+
+- **Add a test for every behaviour you change.** Tests run against loopback servers only. Never point tests, benchmarks or demos at sites you do not own.
+- **Fail closed.** If a check cannot decide, deny rather than admit.
+- **Do not trust the client.** Headers, cookies and browser reports are evidence, not proof. Forwarded headers count only from configured trusted proxies.
+- **Keep privacy defaults.** No fingerprinting. Do not log IPs, URLs, user agents or cookies, and do not store addresses or URLs in plain text.
+- **Avoid accuracy claims.** Report what a test measured, including what got through. Do not present a "bot detection rate".
+- **Keep dependencies minimal.** A new runtime dependency needs a clear reason.
+- **Match the existing style:** ES modules, small functions, and comments that explain *why*.
+
+### Pull requests
+
+Keep each pull request to one change. Describe the problem, the change, how you tested it, and any new limitation or bypass; the pull request template asks for each. Update this README, the docs or `.env.example` when settings or behaviour change.
+
+By contributing you agree that your contribution is licensed under the [MIT License](LICENSE), and you agree to follow the [Code of Conduct](CODE_OF_CONDUCT.md).
 
 ## Background
 
