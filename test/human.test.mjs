@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createHash, randomBytes } from 'node:crypto';
 import http from 'node:http';
+import { readFileSync } from 'node:fs';
 import { createFixture } from './fixture.mjs';
 import { leadingZeroBits } from '../src/gateway.mjs';
 import { humanReport, headerAnomaly, unbrandedChromium, backForwardRequired } from '../src/automation.mjs';
@@ -113,7 +114,7 @@ test('automation is caught even when it performs the hold, and a claimed hold mu
     assert.equal(response.status, status, reason); assert.equal(await errorOf(response), reason);
   }
   const report = humanReport({ webdriver: 'yes', holdMs: 'long', path: [[1, 'x', 2], 'junk'], pointer: '<script>', frame: 'none' });
-  assert.deepEqual(report, { automated: false, trusted: false, holdMs: 0, jumped: false, notes: ['pointer:unknown', 'moves:0'] });
+  assert.deepEqual(report, { automated: false, trusted: false, holdMs: 0, jumped: false, unrepeated: false, notes: ['pointer:unknown', 'moves:0'] });
   // Touch and keyboard users never hover, and a frameless phone browser is not headless.
   assert.equal(humanReport({ ...HUMAN, pointer: 'touch', path: [] }).jumped, false);
   assert.equal(humanReport({ ...HUMAN, frame: [0, 0], plugins: 0 }, 'Mozilla/5.0 (Linux; Android 15) Chrome/141.0 Mobile Safari/537.36').automated, false);
@@ -141,6 +142,94 @@ test('automation is caught even when it performs the hold, and a claimed hold mu
   // A slow, careful hand creeping one pixel at a time is not mistaken for a script.
   assert.equal(humanReport({ ...HUMAN, path: Array.from({ length: 30 }, () => [1, 0, 17]) }).automated, false);
   assert.deepEqual((await f.post('/_gate/human/verify', { signals: HUMAN }, null, visitor())).status, 403); // No issued check.
+});
+
+test('scripted input on Windows is caught: unpredicted moves, emulated touch and a key that never repeats', async t => {
+  const edge = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/141.0.0.0 Safari/537.36 Edg/141.0.0.0';
+  const firefox = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:143.0) Gecko/20100101 Firefox/143.0';
+  const mac = 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/141.0.0.0 Safari/537.36';
+  // Measured: a person's mouse 27/32, 45/52 and 111/121 moves with predictions; patchright 0/40, 0/43, and 5/47 with a
+  // real mouse also crossing its window.
+  for (const input of [[32, 27], [52, 45], [121, 111], [12, 3], [9, 0]]) assert.equal(humanReport({ ...HUMAN, input }, edge).automated, false, String(input));
+  assert.deepEqual(humanReport({ ...HUMAN, input: [40, 0] }, edge).notes, ['no_predicted_input', 'pointer:mouse', 'moves:9', 'predicted:0/40']);
+  assert.equal(humanReport({ ...HUMAN, input: [47, 5] }, edge).automated, true);
+  // Not judged where it was not measured: other engines and other systems.
+  for (const ua of [firefox, mac, 'Mozilla/5.0 (X11; Linux x86_64) Chrome/141.0 Safari/537.36']) assert.equal(humanReport({ ...HUMAN, input: [40, 0] }, ua).automated, false, ua);
+  for (const input of [[40], [40, -1], [40, 0.5], '40,0', null]) assert.equal(humanReport({ ...HUMAN, input }, edge).automated, false);
+  // Screen positions: a real mouse stays on whole physical pixels at any page zoom; scripted moves fall between them.
+  const real = (dpr, scale = dpr, n = 20) => ({ dpr, heights: [797, Math.round(706 * scale / dpr)], points: Array.from({ length: n }, (_, i) => [(300 + i * 3) / scale, (400 + (i % 3)) / scale]) });
+  for (const [dpr, scale] of [[1.25], [1], [1.5], [1.5625, 1.25], [1.125, 1.25], [1.375, 1.25], [2.5, 1.25], [1.1]]) {
+    assert.equal(humanReport({ ...HUMAN, ...real(dpr, scale) }, edge).automated, false, `${dpr} ${scale}`);
+  }
+  assert.deepEqual(humanReport({ ...HUMAN, ...real(1.25) }, edge).notes, ['pointer:mouse', 'moves:9', 'grid:1.00']);
+  const scripted = { dpr: 1.25, points: Array.from({ length: 20 }, (_, i) => [298.2966 + i * 31.0137, 210.4419 + i * 7.31]) };
+  assert.deepEqual(humanReport({ ...HUMAN, ...scripted }, edge).notes, ['off_grid_pointer', 'pointer:mouse', 'moves:9', 'grid:0.00']);
+  // Whole numbers at a 125% display are a script that rounded its coordinates: only a quarter land on the grid.
+  const rounded = { dpr: 1.25, heights: [797, 706], points: Array.from({ length: 20 }, (_, i) => [300 + i + 0.6, 400.6]) };
+  assert.equal(humanReport({ ...HUMAN, ...rounded }, edge).automated, true);
+  // On the grid of a 250% display zoomed out to 50%: allowed only when the window could hold such a page.
+  const half = { ...rounded, points: Array.from({ length: 20 }, (_, i) => [301.6 + 2 * i, 401.6]) };
+  assert.equal(humanReport({ ...HUMAN, ...half, heights: [797, 1400] }, edge).automated, false);
+  assert.equal(humanReport({ ...HUMAN, ...half }, edge).automated, true);
+  for (const ua of [firefox, mac]) assert.equal(humanReport({ ...HUMAN, ...scripted }, ua).automated, false, ua);
+  for (const bad of [{ dpr: 0 }, { dpr: '1.25' }, { points: [[1, 2, 3]] }, { points: 'x' }, { ...scripted, points: scripted.points.slice(0, 9) }]) {
+    assert.equal(humanReport({ ...HUMAN, ...scripted, ...bad }, edge).automated, false, JSON.stringify(bad).slice(0, 40));
+  }
+  // The DevTools protocol's touch emulation on a PC without a touchscreen, or on a Mac. Real touchscreens report 5+.
+  const touch = { ...HUMAN, pointer: 'touch', path: [], pressGap: -1 };
+  assert.deepEqual(humanReport({ ...touch, env: { touch: 1 } }, edge).notes.slice(0, 1), ['emulated_touch']);
+  assert.equal(humanReport({ ...touch, env: { touch: 0 } }, mac).automated, true);
+  assert.equal(humanReport({ ...touch, env: { touch: 10 } }, edge).automated, false);
+  assert.equal(humanReport({ ...touch, env: { touch: 5 } }, 'Mozilla/5.0 (Linux; Android 15) Chrome/141.0 Mobile Safari/537.36').automated, false);
+  assert.equal(humanReport({ ...touch, env: { touch: 1 } }, 'Mozilla/5.0 (Linux; Android 15) Chrome/141.0 Mobile Safari/537.36').automated, false);
+  // A key held on Windows repeats; one keydown and a wait does not. People with repeat off are told to use the pointer.
+  const keyboard = { ...HUMAN, pointer: 'keyboard', path: [], pressGap: -1 };
+  assert.equal(humanReport({ ...keyboard, repeats: 14 }, edge).unrepeated, false);
+  assert.deepEqual(humanReport({ ...keyboard, repeats: 0 }, firefox).notes, ['no_key_repeat', 'pointer:keyboard', 'moves:0', 'repeats:0']);
+  assert.equal(humanReport({ ...keyboard, repeats: 'many' }, edge).unrepeated, true);
+  assert.equal(humanReport({ ...keyboard, repeats: 0 }, mac).unrepeated, false); // A Mac's longest repeat delay is longer than the hold.
+  assert.equal(humanReport({ ...keyboard, repeats: 0, holdMs: 900 }, edge).unrepeated, false); // Too short to judge; fails the hold anyway.
+  const f = await fixture(t);
+  const cases = [
+    [{ input: [40, 0] }, 'automation_detected'],
+    [{ ...scripted, input: [40, 38] }, 'automation_detected'],
+    [{ ...touch, env: { touch: 1 } }, 'automation_detected'],
+    [{ ...keyboard, repeats: 0 }, 'human_check_failed'],
+  ];
+  for (const [index, [signals, reason]] of cases.entries()) {
+    const headers = visitor(`203.0.113.${200 + index}`, { 'user-agent': edge });
+    const response = await check(f, { headers, signals });
+    assert.equal(response.status, 403); assert.equal(await errorOf(response), reason);
+  }
+  for (const [index, signals] of [{ input: [52, 45] }, { ...keyboard, repeats: 14 }, { ...touch, env: { touch: 10 } }].entries()) {
+    const response = await check(f, { headers: visitor(`203.0.113.${210 + index}`, { 'user-agent': edge }), signals });
+    assert.equal(response.status, 200, await response.clone().text());
+  }
+});
+
+test('requests held by a DevTools client are caught: cached fetches from the page cost far more than from a shared worker', async t => {
+  const edge = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/141.0.0.0 Safari/537.36 Edg/141.0.0.0';
+  const mac = 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/141.0.0.0 Safari/537.36';
+  // Measured [page ms, shared worker ms, fetches]: Edge, Chrome, an extension watching requests, load, DevTools open.
+  for (const fetches of [[5.2, 4.8, 10], [4.9, 4, 10], [11, 10, 10], [7.2, 6.2, 10], [8.3, 5.6, 10], [0.9, 0.3, 8]]) {
+    assert.equal(humanReport({ ...HUMAN, fetches }, edge).automated, false, String(fetches));
+  }
+  // patchright, which intercepts every request: 2.6 to 3.4 times, and at least 0.65 ms more per fetch.
+  assert.deepEqual(humanReport({ ...HUMAN, fetches: [10.6, 4, 10] }, edge).notes, ['request_interception', 'pointer:mouse', 'moves:9', 'fetches:2.65']);
+  assert.equal(humanReport({ ...HUMAN, fetches: [19.2, 5.7, 8] }, edge).automated, true);
+  assert.equal(humanReport({ ...HUMAN, fetches: [10.6, 4, 10] }, mac).automated, false); // Not measured off Windows.
+  for (const fetches of [[10.6, 0, 10], [10.6, 4], [10.6, 4, 2], [10.6, 4, 7.5], ['10.6', 4, 10], null]) {
+    assert.equal(humanReport({ ...HUMAN, fetches }, edge).automated, false, JSON.stringify(fetches));
+  }
+  const f = await fixture(t);
+  // The byte the page times stays in the browser's cache; the shared worker that times it from outside the page.
+  const cached = await f.request('/_gate/human/cached?123456', { headers: visitor() });
+  assert.equal(cached.status, 200); assert.equal(cached.headers.get('cache-control'), 'private, max-age=600'); assert.equal(await cached.text(), '1');
+  assert.match(readFileSync(new URL('../web/shared.js', import.meta.url), 'utf8'), /onconnect[\s\S]*transferSize === 0/);
+  const response = await check(f, { headers: visitor('203.0.113.220', { 'user-agent': edge }), signals: { fetches: [10.6, 4, 10] } });
+  assert.equal(response.status, 403); assert.equal(await errorOf(response), 'automation_detected');
+  const passed = await check(f, { headers: visitor('203.0.113.221', { 'user-agent': edge }), signals: { fetches: [5.2, 4.8, 10] } });
+  assert.equal(passed.status, 200, await passed.clone().text());
 });
 
 test('each check gets its own scrambled script, and only that script can seal a report the server accepts', async t => {

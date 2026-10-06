@@ -55,6 +55,46 @@ export function backForwardRequired(report, userAgent = '') {
   return gecko && !handheld;
 }
 
+// Chromium predicts where a moving pointer goes next (PointerEvent.getPredictedEvents) once moves arrive every few
+// milliseconds, as they do from a mouse or touchpad: 27 to 111 of every person's moves on Windows carried predictions,
+// all but the first few after the hand starts. patchright driving installed Edge, moving like a hand but with a round
+// trip and a pause per step, got none in 83 moves, and 5 of 47 with a real mouse also crossing its window. A script that
+// sends its moves faster gets predictions too, so this catches unhurried scripts, not every script (see the threat
+// model). Measured on Windows only.
+export const PREDICTED_MIN_MOVES = 10;
+export const PREDICTED_MIN_SHARE = 0.2;
+const windowsDesktop = userAgent => /Windows NT/.test(userAgent) && !/Mobile|Android/.test(userAgent);
+// Windows keeps the mouse cursor on whole physical pixels, so every screenX and screenY a real mouse produces, times
+// the display scale, is a whole number: 326 of 326 moves in Edge and Chrome, at 100%, 125% and 150% scaling and at page
+// zooms from 90% to 200%. Page zoom is part of devicePixelRatio but not of screenX, so the scale is devicePixelRatio
+// itself or a Windows scale that a Chrome zoom level turns into it. Scripted moves land between pixels unless the
+// script works out the grid: 40 of 40 and 80 of 123 moves off it. The zoom levels tried are limited by the window:
+// the page (innerHeight, zoomed) fits inside the window (outerHeight), under at most 300px of toolbars.
+export const GRID_MIN_MOVES = 10;
+export const GRID_MIN_SHARE = 0.8;
+const WINDOWS_SCALES = [1, 1.25, 1.5, 1.75, 2, 2.25, 2.5, 3, 3.5, 4, 4.5, 5];
+const CHROME_ZOOMS = [0.25, 1 / 3, 0.5, 2 / 3, 0.75, 0.8, 0.9, 1, 1.1, 1.25, 1.5, 1.75, 2, 2.5, 3, 4, 5];
+export function pixelGridShare(points, dpr, [outer, inner] = []) {
+  const sized = Number.isFinite(outer) && Number.isFinite(inner) && inner > 0;
+  const zooms = sized ? CHROME_ZOOMS.filter(zoom => zoom >= (outer - 300) / inner && zoom <= outer / inner * 1.02) : CHROME_ZOOMS;
+  const scales = [dpr, ...WINDOWS_SCALES.filter(scale => zooms.some(zoom => Math.abs(scale * zoom - dpr) < 0.005 * dpr))];
+  const whole = v => Math.abs(v - Math.round(v)) < 0.02;
+  return Math.max(...scales.map(scale => points.filter(([x, y]) => whole(x * scale) && whole(y * scale)).length / points.length));
+}
+
+// A key held down repeats after at most a second on Windows (its longest delay setting), so a held Space or Enter
+// sends repeated keydowns before the hold completes. A script that presses once and waits sends one.
+export const KEY_REPEAT_HOLD_MS = 1200;
+
+// A DevTools client that intercepts requests holds each one until it answers, cache hits included. patchright does this
+// on every page, as do Playwright and Puppeteer scripts that route requests. The check page fetches one cached byte 8
+// times in a row from the page and from a shared worker, which such a client does not reach, and reports the fastest of
+// 6 rounds for each. A person's Edge and Chrome: page 1.0 to 1.25 times the worker, also under load and with an
+// extension watching every request (it sees both), and up to 1.5 with DevTools open. patchright: 2.6 to 3.4 times, 0.65
+// ms or more per fetch. Measured on Windows only.
+export const INTERCEPTION_RATIO = 2;
+export const INTERCEPTION_MIN_MS = 0.3;
+
 // What the human-check page reports. Every field is client-controlled, so missing or malformed values count against it.
 // `returned` says whether this check's page came back from the hop page without loading again (null: not judged).
 export function humanReport(report, userAgent = '', { returned = null } = {}) {
@@ -85,6 +125,26 @@ export function humanReport(report, userAgent = '', { returned = null } = {}) {
   if ((chromium && devtools !== null && devtools < CONSOLE_TAMPERED_RATIO) || (chromium && worker !== null && worker < CONSOLE_TAMPERED_RATIO)
     || (chromium && devtools !== null && 'worker' in value && worker === null) || value.hooked === true
     || (chromium && (value.touched === false || (value.worker && value.worker.touched === false)))) found.push('console_tampered');
+  // [moves, moves with predictions], counted by the probe for the mouse.
+  const input = Array.isArray(value.input) && value.input.length === 2 && value.input.every(n => Number.isSafeInteger(n) && n >= 0) ? value.input : null;
+  if (input && chromium && pointer === 'mouse' && windowsDesktop(userAgent) && input[0] >= PREDICTED_MIN_MOVES && input[1] < input[0] * PREDICTED_MIN_SHARE) found.push('no_predicted_input');
+  // [screenX, screenY] of the last 64 mouse moves, devicePixelRatio and [outerHeight, innerHeight], from the probe.
+  const points = (Array.isArray(value.points) ? value.points.slice(-64) : []).filter(point => Array.isArray(point) && point.length === 2 && point.every(Number.isFinite));
+  const dpr = Number.isFinite(value.dpr) && value.dpr >= 0.25 && value.dpr <= 25 ? value.dpr : null;
+  const heights = Array.isArray(value.heights) && value.heights.length === 2 && value.heights.every(Number.isFinite) ? value.heights : [];
+  const grid = dpr && points.length >= GRID_MIN_MOVES ? pixelGridShare(points, dpr, heights) : null;
+  if (grid !== null && chromium && pointer === 'mouse' && windowsDesktop(userAgent) && grid < GRID_MIN_SHARE) found.push('off_grid_pointer');
+  // Touch input on a Windows PC that reports no multi-touch screen, or on a Mac (Macs have no touchscreen): what the
+  // DevTools protocol's touch emulation produces. Windows touchscreens report 5 or more touch points.
+  const touchPoints = Number.isSafeInteger(value.env?.touch) ? value.env.touch : null;
+  if (pointer === 'touch' && touchPoints !== null && ((windowsDesktop(userAgent) && touchPoints < 2) || (/Macintosh/.test(userAgent) && touchPoints === 0))) found.push('emulated_touch');
+  // [page ms, shared worker ms, fetches each], the fastest round of cached fetches from each side.
+  const fetches = Array.isArray(value.fetches) && value.fetches.length === 3 && value.fetches.every(n => Number.isFinite(n) && n >= 0)
+    && Number.isSafeInteger(value.fetches[2]) && value.fetches[2] >= 4 && value.fetches[1] > 0 ? value.fetches : null;
+  const held = fetches ? fetches[0] / fetches[1] : null;
+  if (held !== null && chromium && windowsDesktop(userAgent) && held >= INTERCEPTION_RATIO && (fetches[0] - fetches[1]) / fetches[2] >= INTERCEPTION_MIN_MS) found.push('request_interception');
+  const repeats = Number.isSafeInteger(value.repeats) && value.repeats >= 0 ? value.repeats : 0;
+  const unrepeated = pointer === 'keyboard' && windowsDesktop(userAgent) && holdMs >= KEY_REPEAT_HOLD_MS && repeats === 0;
   const gap = value.pressGap, final = path.at(-1);
   return {
     automated: found.length > 0,
@@ -95,7 +155,12 @@ export function humanReport(report, userAgent = '', { returned = null } = {}) {
     // Touch and keys never hover.
     jumped: pointer === 'mouse' && (path.length < 2 || Math.hypot(final[0], final[1]) > 80
       || !(Number.isFinite(gap) && gap >= 0 && gap <= 3)),
-    notes: [...found, `pointer:${pointer}`, `moves:${path.length ? path.length + 1 : 0}`, ...(devtools === null ? [] : [`devtools:${devtools.toFixed(2)}`]), ...(worker === null ? [] : [`worker:${worker.toFixed(2)}`])],
+    // A key held on Windows that never repeated. People with key repeat switched off land here too, so this fails the
+    // check (the page suggests the pointer) rather than calling the browser automated.
+    unrepeated,
+    notes: [...found, ...(unrepeated ? ['no_key_repeat'] : []), `pointer:${pointer}`, `moves:${path.length ? path.length + 1 : 0}`,
+      ...(input && pointer === 'mouse' ? [`predicted:${input[1]}/${input[0]}`] : []), ...(grid !== null && pointer === 'mouse' ? [`grid:${grid.toFixed(2)}`] : []), ...(pointer === 'keyboard' ? [`repeats:${repeats}`] : []),
+      ...(devtools === null ? [] : [`devtools:${devtools.toFixed(2)}`]), ...(worker === null ? [] : [`worker:${worker.toFixed(2)}`]), ...(held === null ? [] : [`fetches:${held.toFixed(2)}`])],
   };
 }
 
