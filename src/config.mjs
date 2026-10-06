@@ -25,8 +25,16 @@ export function configFromEnv(env = process.env) {
   if (!['block', 'allow'].includes(aiAgents)) throw new Error('Invalid AI_AGENTS');
   const humanCheck = env.HUMAN_CHECK ?? 'suspicious';
   if (!['suspicious', 'always', 'off'].includes(humanCheck)) throw new Error('Invalid HUMAN_CHECK');
-  const openPaths = (env.OPEN_PATHS ?? '/robots.txt').split(',').map(path => path.trim()).filter(Boolean);
-  for (const path of openPaths) if (!/^\/[^?#\s]*$/.test(path)) throw new Error(`Invalid OPEN_PATHS entry ${path}`);
+  // A path ending in * opens everything under it. Machine-read files (robots.txt, the favicon, /.well-known/ files such as
+  // security.txt) stay readable by default.
+  const openPaths = (env.OPEN_PATHS ?? '/robots.txt,/favicon.ico,/.well-known/*').split(',').map(path => path.trim()).filter(Boolean);
+  for (const path of openPaths) if (!/^\/[^?#\s*]*\*?$/.test(path)) throw new Error(`Invalid OPEN_PATHS entry ${path}`);
+  const honeypot = env.HONEYPOT ?? 'block';
+  if (!['block', 'log', 'off'].includes(honeypot)) throw new Error('Invalid HONEYPOT');
+  const openGraph = env.OPEN_GRAPH ?? 'off';
+  if (!['on', 'off'].includes(openGraph)) throw new Error('Invalid OPEN_GRAPH');
+  const contact = env.CONTACT ?? '';
+  if (contact && !/^[^\s@<>"']+@[^\s@<>"']+\.[^\s@<>"']+$/.test(contact) && !/^https:\/\/[^\s<>"']+$/.test(contact)) throw new Error('CONTACT must be an email address or an https:// link');
   const verifiedCrawlers = (env.VERIFIED_CRAWLERS ?? Object.keys(CRAWLERS).join(',')).split(',').map(name => name.trim().toLowerCase()).filter(name => name && name !== 'off');
   for (const name of verifiedCrawlers) if (!CRAWLERS[name]) throw new Error(`Unknown VERIFIED_CRAWLERS entry ${name}`);
   const sandboxCheck = env.SANDBOX_CHECK ?? 'enforce';
@@ -71,5 +79,11 @@ export function configFromEnv(env = process.env) {
     // Sandbox signals (datacenter address, software GPU, missing devices) scored at the human check. `log` only records them;
     // `enforce` refuses a score of 4 or more and shortens passes at 2 or 3.
     sandboxCheck, cloudRangesFile: resolve(env.CLOUD_RANGES_FILE ?? resolve(dataDir, 'cloud-ranges.txt')),
+    // Operator rules (see policy.mjs), loaded at start. A hidden link in every gate page that only tools follow: `block`
+    // blocks that network, `log` only records it. Link-preview tags for chat apps, cached for OPEN_GRAPH_SECONDS.
+    policyFile: env.POLICY_FILE ? resolve(env.POLICY_FILE) : null, policy: [], honeypot,
+    openGraph: openGraph === 'on', openGraphSeconds: integer(env, 'OPEN_GRAPH_SECONDS', 86400, 60, 7 * 86400),
+    // Shown on gate pages so a person who was refused can reach the operator. Prometheus counters on loopback.
+    contact, metricsPort: env.METRICS_PORT ? integer(env, 'METRICS_PORT', 0, 1, 65535) : null,
   };
 }

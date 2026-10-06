@@ -24,15 +24,24 @@ const icon = (name, extra = '') => `<svg class="icon icon-${name}${extra}" viewB
 const STATE_MARKS = icon('spinner', ' when-busy') + icon('shield', ' when-ready') + icon('check', ' when-done') + icon('alert', ' when-error');
 const RETRY = '<button id="retry" class="button secondary" type="button">Reload page</button>';
 
+// Where a refused person can reach the operator (CONTACT): an email address, with the reference filled in, or a link.
+const contactLink = (contact, requestID) => contact.includes('@') && !contact.startsWith('https://')
+  ? `mailto:${contact}?subject=${encodeURIComponent(`Human Gate reference ${requestID}`)}` : contact;
+
 // One centred panel: the site it guards, a mark that shows the state, the message, the action, and a reference.
-function page({ title, intro, body = '', marks, tone, state, requestID, site, head = '', headingID = 'title' }) {
+// `meta` holds the guarded page's own link-preview tags (see preview.mjs). `trap` is a link inside a <template>, which
+// browsers parse but never show, follow or prefetch, and which screen readers do not see; tools that pull links out of
+// the HTML find it, and fetching it blocks their network (HONEYPOT).
+function page({ title, intro, body = '', marks, tone, state, requestID, site, head = '', headingID = 'title', meta = [], trap = '', contact = '' }) {
+  const previews = meta.map(([attribute, key, content]) => `<meta ${attribute}="${escape(key)}" content="${escape(content)}">`).join('');
   return '<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">'
-    + `<meta name="color-scheme" content="light dark"><meta name="robots" content="noindex"><title>${title} · Human Gate</title><link rel="stylesheet" href="/_gate/style.css">${head}</head>`
+    + `<meta name="color-scheme" content="light dark"><meta name="robots" content="noindex">${previews}<title>${title} · Human Gate</title><link rel="stylesheet" href="/_gate/style.css">${head}</head>`
     + '<body class="gate"><main class="stage">'
     + (site ? `<div class="site">${icon('lock')}<span>${escape(site)}</span></div>` : '')
     + `<section class="panel" data-tone="${tone}"${state ? ` data-state="${state}"` : ''} aria-labelledby="${headingID}">`
     + `<div class="mark">${marks}</div><h1 id="${headingID}">${title}</h1><p class="lede">${intro}</p>${body}</section>`
-    + `<footer class="meta"><span>Reference <code>${escape(requestID)}</code></span><span>Protected by Human Gate</span></footer>`
+    + `<footer class="meta"><span>Reference <code>${escape(requestID)}</code></span>${contact ? `<a href="${escape(contactLink(contact, requestID))}">Contact the operator</a>` : ''}<span>Protected by Human Gate</span></footer>`
+    + (trap ? `<template><a href="${escape(trap)}">Text-only version of this page</a></template>` : '')
     + '</main></body></html>';
 }
 
@@ -51,25 +60,31 @@ const DENIALS = {
     intro: () => 'This browser appears to be running on a server or in a virtual machine, not on a personal device.' },
   automation_declared: { mark: 'bot', tone: 'danger', title: 'Automated access is restricted',
     intro: () => 'This browser reported an automation signal. If you are browsing yourself or use assistive tools, contact this website’s operator for help.' },
+  honeypot: { mark: 'bot', tone: 'danger', title: 'Automated browsing detected',
+    intro: () => 'This address is hidden from people and only automated tools find it, so requests from your network are blocked for a while.',
+    wait: retry => `Access resumes automatically in about ${duration(retry)}` },
+  policy_denied: { mark: 'ban', tone: 'danger', title: 'Access refused',
+    intro: () => 'This website’s operator does not allow access from this browser or network.' },
 };
 const PAUSED = { mark: 'clock', tone: 'warning', title: 'Access paused', intro: () => 'This website’s access limit has been reached. It resets on its own.',
   wait: retry => `Wait at least ${duration(retry)} before trying again` };
 const UNKNOWN = { mark: 'alert', tone: 'neutral', title: 'This request could not be completed', intro: () => 'Something went wrong while opening this page. It is often temporary, so try again in a moment.' };
 
-export function denialPage({ status, reason, retryAfter, requestID, site }) {
+export function denialPage({ status, reason, retryAfter, requestID, site, ...extras }) {
   // Say exactly when access returns. An unexplained block looks like the site is down.
-  const notice = status === 429 && reason !== 'temporarily_blocked' ? PAUSED : DENIALS[reason] ?? UNKNOWN;
+  const notice = DENIALS[reason] ?? (status === 429 ? PAUSED : UNKNOWN);
   const wait = notice.wait ? `<p class="wait">${icon('clock')}<span>${notice.wait(retryAfter)}</span></p>` : '';
   const note = notice.note ? `<div class="note"><h2>${notice.note[0]}</h2><p>${notice.note[1]}</p></div>` : '';
   // No retry button while a wait is running: reloading early only spends the network's budget and can extend a block.
   const retry = status === 429 ? '' : '<a class="button secondary" href="">Try again</a>';
-  return page({ title: notice.title, intro: notice.intro(retryAfter), tone: notice.tone, marks: icon(notice.mark), requestID, site,
-    body: `${wait}${note}${retry}<p class="help">If this keeps happening, contact this website’s operator and include the reference below.</p>` });
+  const operator = extras.contact ? `<a href="${escape(contactLink(extras.contact, requestID))}">contact this website’s operator</a>` : 'contact this website’s operator';
+  return page({ title: notice.title, intro: notice.intro(retryAfter), tone: notice.tone, marks: icon(notice.mark), requestID, site, ...extras,
+    body: `${wait}${note}${retry}<p class="help">If this keeps happening, ${operator} and include the reference below.</p>` });
 }
 
 // No puzzles: the browser spends a moment of computation, then the original page reloads.
-export function challengePage({ retryAfter, requestID, site }) {
-  return page({ title: 'Checking your browser', headingID: 'challenge-heading', state: 'working', tone: 'accent', requestID, site, marks: STATE_MARKS,
+export function challengePage({ retryAfter, requestID, site, ...extras }) {
+  return page({ title: 'Checking your browser', headingID: 'challenge-heading', state: 'working', tone: 'accent', requestID, site, marks: STATE_MARKS, ...extras,
     intro: 'This website is receiving a lot of traffic from your network. Your browser is doing a short automatic check, and the page reloads when it finishes.',
     body: `<div class="progress" aria-hidden="true"></div><p id="status" role="status" aria-live="polite">Starting the check.</p>${RETRY}`
       + `<noscript><p class="help">This check needs JavaScript. Otherwise, wait about ${duration(retryAfter)} and reload this page.</p></noscript>`,
@@ -77,8 +92,8 @@ export function challengePage({ retryAfter, requestID, site }) {
 }
 
 // The human check's stop on the way back to itself (see hopPage in the gateway). People normally see it for a moment at most.
-export function hopPage({ requestID, site }) {
-  return page({ title: 'Checking your browser', headingID: 'hop-heading', state: 'working', tone: 'accent', requestID, site, marks: STATE_MARKS,
+export function hopPage({ requestID, site, ...extras }) {
+  return page({ title: 'Checking your browser', headingID: 'hop-heading', state: 'working', tone: 'accent', requestID, site, marks: STATE_MARKS, ...extras,
     intro: 'Returning to the human check.',
     body: `<p id="status" role="status" aria-live="polite">One moment…</p><button id="retry" class="button secondary" type="button">Return to the check</button>`
       + '<noscript><p class="help">This check needs JavaScript. Turn it on and go back to the previous page.</p></noscript>',
@@ -86,8 +101,8 @@ export function hopPage({ requestID, site }) {
 }
 
 // A plainly labelled human check. Mainstream AI agents are built to stop at these and hand control to the person.
-export function humanPage({ recheck, requestID, passSeconds, site }) {
-  return page({ title: recheck ? 'Still you?' : 'Confirm you are human', headingID: 'human-heading', state: 'loading', tone: 'accent', requestID, site, marks: STATE_MARKS,
+export function humanPage({ recheck, requestID, passSeconds, site, ...extras }) {
+  return page({ title: recheck ? 'Still you?' : 'Confirm you are human', headingID: 'human-heading', state: 'loading', tone: 'accent', requestID, site, marks: STATE_MARKS, ...extras,
     intro: recheck ? 'This browser has opened a lot of pages, or opened them faster than people usually read. Confirm once more to keep browsing.'
       : `This website is for people. AI agents and automated browsers are not allowed. Confirm once to keep browsing for up to ${duration(passSeconds)} on this browser.`,
     body: '<button id="hold" type="button" disabled aria-describedby="status hint"><span>Press and hold</span><span class="hold-fill" aria-hidden="true"></span></button>'

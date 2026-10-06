@@ -10,6 +10,8 @@ import { declaredAIAgent, crawlerVerifier } from './agents.mjs';
 import { clientAddress, networkPrefix } from './network.mjs';
 import { sandboxReport, SANDBOX_BLOCK_SCORE, SANDBOX_STRICT_SCORE } from './sandbox.mjs';
 import { scrambledProbe, openReport } from './scramble.mjs';
+import { matchPolicy } from './policy.mjs';
+import { previewReader } from './preview.mjs';
 
 const PREFIX = '/_gate/';
 // Public-mode denials that count as a strike when a client keeps sending requests anyway.
@@ -21,7 +23,7 @@ const PUBLIC_RESPONSE_HEADERS = ['content-language', 'content-security-policy', 
 // How long a person must hold the button. Agent click tools press and release at once.
 export const HUMAN_HOLD_MS = 1500;
 // Outcomes after which a network has to pass the human check for a while, whatever its requests look like.
-const SUSPECT_OUTCOMES = new Set(['automation_detected', 'sandbox_detected', 'human_check_failed', 'temporarily_blocked']);
+const SUSPECT_OUTCOMES = new Set(['automation_detected', 'sandbox_detected', 'human_check_failed', 'temporarily_blocked', 'honeypot']);
 const SUSPECT_MS = 3600000;
 // A check page that loads again this soon after stepping to the hop page did not come back from the back/forward cache.
 const HOP_RELOAD_MS = 15000;
@@ -93,8 +95,15 @@ export function createGateway({ config, store, assets, auth = webauthn(config), 
   const humanCookie = config.secure ? '__Host-hg_human' : 'hg_human';
   const hopCookie = config.secure ? '__Host-hg_hop' : 'hg_hop';
   const verifyCrawler = crawlerVerifier(config.verifiedCrawlers ?? [], resolver);
-  // Answered without any check, so crawlers can read the site's rules (and operators can add feeds).
-  const openPaths = new Set(config.openPaths ?? ['/robots.txt']);
+  // Answered without any check, so crawlers can read the site's rules (and operators can add feeds). An entry ending in
+  // * opens everything under it; link-preview images (OPEN_GRAPH) are open too.
+  const openPaths = config.openPaths ?? ['/robots.txt'];
+  const openExact = new Set(openPaths.filter(path => !path.endsWith('*')));
+  const openPrefixes = openPaths.filter(path => path.endsWith('*')).map(path => path.slice(0, -1));
+  const preview = config.openGraph ? previewReader({ config }) : null;
+  const isOpen = path => openExact.has(path) || openPrefixes.some(prefix => path.startsWith(prefix)) || Boolean(preview?.isImage(path));
+  // What every gate page carries besides its message: the operator's contact, and a fresh trap link (HONEYPOT).
+  const pageExtras = () => ({ contact: config.contact ?? '', trap: (config.honeypot ?? 'off') !== 'off' ? `${PREFIX}more/${token()}` : '' });
   const secureContext = config.secure || new URL(config.origin).hostname === 'localhost';
   // Why this visitor should prove it is a person. In `suspicious` mode, anyone without a reason never sees the check.
   function suspicion(req, ua, ip, network) {
@@ -123,7 +132,7 @@ export function createGateway({ config, store, assets, auth = webauthn(config), 
     const requestID = randomUUID();
     const isPublic = config.mode === 'public';
     let outcome = 'internal_error';
-    let releaseSlot, controller, proxySignal, abortOnClose, network, chargedBytes = 0;
+    let releaseSlot, controller, proxySignal, abortOnClose, network, url, chargedBytes = 0;
     let signals = [];
     res.setHeader('x-request-id', requestID);
     res.setHeader('cache-control', 'no-store, private');
@@ -142,7 +151,7 @@ export function createGateway({ config, store, assets, auth = webauthn(config), 
     try {
       if (req.headers.host !== new URL(config.origin).host) throw new Denied(421, 'wrong_host');
       if (!req.url?.startsWith('/') || req.url.startsWith('//') || /[\\\x00-\x20]/.test(req.url)) throw new Denied(400, 'invalid_target');
-      const url = new URL(req.url, config.origin);
+      url = new URL(req.url, config.origin);
       // Forwarded headers count only when the direct peer is a configured trusted proxy.
       const ip = clientAddress(req.socket.remoteAddress, req.headers['x-forwarded-for'], config.trustedProxies);
       const ua = req.headers['user-agent'] ?? '';
@@ -155,7 +164,12 @@ export function createGateway({ config, store, assets, auth = webauthn(config), 
         if (ban) throw new Denied(429, 'temporarily_blocked', Math.max(1, Math.ceil((ban.until - store.now()) / 1000)));
       }
       if (!store.limit(`all:${network ?? digest(ip)}`, config.connectionsPerMinute)) throw new Denied(429, 'connection_rate');
-      const agent = config.aiAgents === 'block' && !gateAsset && !openPaths.has(url.pathname) && declaredAIAgent(req.headers);
+      // The operator's own rules come first (POLICY_FILE).
+      const rule = gateAsset ? null : matchPolicy(config.policy ?? [], { path: url.pathname, userAgent: ua, headers: req.headers, ip });
+      if (rule) signals.push(`policy:${rule.name}`);
+      if (rule?.action === 'deny') throw new Denied(403, 'policy_denied');
+      const allowed = rule?.action === 'allow';
+      const agent = config.aiAgents === 'block' && !gateAsset && !allowed && !isOpen(url.pathname) && declaredAIAgent(req.headers);
       if (agent) { signals.push(`ai_agent:${agent}`); throw new Denied(403, 'ai_agent'); }
       // Public sites must accept people arriving from links elsewhere; embedding stays same-site.
       const navigation = isPublic && req.headers['sec-fetch-mode'] === 'navigate' && ['GET', 'HEAD'].includes(req.method);
@@ -196,7 +210,14 @@ export function createGateway({ config, store, assets, auth = webauthn(config), 
           outcome = fresh ? 'human_hop' : 'human_hop_repeat';
           // The same opener policy as the check page, so the trip stays in one browsing context group.
           res.setHeader('cross-origin-opener-policy', 'same-origin');
-          return send(res, 200, hopPage({ requestID, site: new URL(config.origin).hostname }), 'text/html; charset=utf-8');
+          return send(res, 200, hopPage({ requestID, site: new URL(config.origin).hostname, ...pageExtras() }), 'text/html; charset=utf-8');
+        }
+        // The hidden link in gate pages (see page in denial.mjs). People never see it; whatever fetches it pulled links
+        // out of the page's HTML, and its network is blocked.
+        if (['GET', 'HEAD'].includes(req.method) && (config.honeypot ?? 'off') !== 'off' && url.pathname.startsWith(`${PREFIX}more/`)) {
+          signals.push('honeypot');
+          if (config.honeypot === 'block' && network) throw new Denied(429, 'honeypot', store.ban(network, config.banSeconds, config.maxBanSeconds));
+          throw new Denied(404, 'not_found');
         }
         if (req.method !== 'POST') throw new Denied(404, 'not_found');
         if (req.headers.origin !== config.origin) throw new Denied(403, 'origin_mismatch');
@@ -319,10 +340,10 @@ export function createGateway({ config, store, assets, auth = webauthn(config), 
       const declared = automationDecision(config.automationPolicy, ua, null, false);
       if (declared) throw new Denied(403, declared);
       // The subject is whoever the budgets are charged to: a credential, a clearance, or a network.
-      if (isPublic && config.humanCheck !== 'off' && !openPaths.has(url.pathname)) {
+      if (isPublic && config.humanCheck !== 'off' && !isOpen(url.pathname) && !allowed) {
         const human = store.human(cookie(req, humanCookie), ua);
         const crawler = !human && await verifyCrawler(ip, ua);
-        const reason = !human && !crawler && suspicion(req, ua, ip, network);
+        const reason = !human && !crawler && (rule?.action === 'check' ? 'policy' : suspicion(req, ua, ip, network));
         if (crawler) signals.push(`crawler:${crawler}`);
         else if (reason && isDocument(req) && reloadedAfterHop(req, url, ua)) {
           setCookie(res, hopCookie, '', 0); signals.push('back_forward_reload'); throw new Denied(403, 'automation_detected');
@@ -376,7 +397,7 @@ export function createGateway({ config, store, assets, auth = webauthn(config), 
       const upstream = await fetch(target, {
         method: req.method, redirect: 'manual', signal: proxySignal,
         headers: {
-          accept: req.headers.accept ?? '*/*', 'user-agent': 'HumanGate/0.9', ...identity,
+          accept: req.headers.accept ?? '*/*', 'user-agent': 'HumanGate/0.10', ...identity,
           ...(req.headers['accept-language'] ? { 'accept-language': req.headers['accept-language'] } : {}),
           ...(range ? { range, ...(req.headers['if-range'] ? { 'if-range': req.headers['if-range'] } : {}) } : {}),
         },
@@ -421,11 +442,18 @@ export function createGateway({ config, store, assets, auth = webauthn(config), 
       if (res.headersSent || res.destroyed) { if (!res.headersSent) res.statusCode = failure.status; res.destroy(); return; }
       const status = failure.status;
       if (status === 429) res.setHeader('retry-after', String(failure.retryAfter));
-      if (['GET', 'HEAD'].includes(req.method) && req.headers.accept?.includes('text/html')) {
+      // A client without fetch metadata asking for a page it may not see is most likely a chat app's link preview: it gets
+      // the check page with the page's own preview tags, as a 200 because preview clients skip error pages (OPEN_GRAPH).
+      const previewing = Boolean(preview && url && outcome === 'human_check_required' && ['GET', 'HEAD'].includes(req.method) && !req.headers['sec-fetch-mode']
+        && (!req.headers.accept || /text\/html|\*\/\*/.test(req.headers.accept)));
+      if (previewing || (['GET', 'HEAD'].includes(req.method) && req.headers.accept?.includes('text/html'))) {
         // A person over budget can pay a little CPU instead of waiting. Scrapers pay it on every reset.
         const challenge = network && CLEARABLE_REASONS.has(outcome) && store.clearanceCount(network) < config.clearancesPerWindow;
         const human = ['human_check_required', 'human_recheck'].includes(outcome);
         const site = new URL(config.origin).hostname;
+        // Each network may make the gateway read a few pages a minute from the origin for this; files are not pages.
+        const page = previewing && !/\.(?!(?:html?|php|aspx?)$)[a-z0-9]{1,8}$/i.test(url.pathname);
+        const meta = page && network && store.limit(`preview:${network}`, 30) ? await preview.tags(url.pathname + url.search) : [];
         if (human) {
           // Firefox keeps the check page for its trip to the hop page only if the page may be stored, and only in its
           // own browsing context group: a page another site opened by script shares the opener's group until COOP splits it.
@@ -433,9 +461,10 @@ export function createGateway({ config, store, assets, auth = webauthn(config), 
           res.setHeader('vary', '*');
           res.setHeader('cross-origin-opener-policy', 'same-origin');
         }
-        send(res, status, human ? humanPage({ recheck: outcome === 'human_recheck', requestID, passSeconds: config.humanPassSeconds, site })
-          : challenge ? challengePage({ retryAfter: failure.retryAfter, requestID, site })
-          : denialPage({ status, reason: outcome, retryAfter: failure.retryAfter, requestID, site }), 'text/html; charset=utf-8');
+        if (res.destroyed) return;
+        send(res, previewing ? 200 : status, human ? humanPage({ recheck: outcome === 'human_recheck', requestID, passSeconds: config.humanPassSeconds, site, ...pageExtras(), meta })
+          : challenge ? challengePage({ retryAfter: failure.retryAfter, requestID, site, ...pageExtras() })
+          : denialPage({ status, reason: outcome, retryAfter: failure.retryAfter, requestID, site, ...pageExtras() }), 'text/html; charset=utf-8');
         return;
       }
       send(res, status, { error: outcome, requestID });

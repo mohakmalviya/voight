@@ -204,7 +204,11 @@ A pass is a random token, stored hashed, valid for `HUMAN_PASS_SECONDS` (six hou
 
 | Attack | Handling / limitation |
 | --- | --- |
-| Self-declared AI crawler or assistant (GPTBot, ChatGPT-User, ClaudeBot, Claude-User, PerplexityBot, …) | Refused on every request except `robots.txt` |
+| Self-declared AI crawler or assistant (GPTBot, ChatGPT-User, ClaudeBot, Claude-User, PerplexityBot, …) | Refused on every request except `robots.txt`, the favicon and `/.well-known/` files |
+| Firefox's AI link previews (`X-Firefox-Ai` header) | Refused like a named AI agent |
+| A scraper or agent that pulls links out of a gate page's HTML and fetches them | The hidden link (inside a `<template>`, never shown, followed or prefetched by browsers) blocks its network for `BAN_SECONDS`, longer on repeats (`honeypot`). Tested with requests only; a tool that skips `/_gate/more/` or reads only what a browser renders is not caught by it |
+| A client that copies an allowed user agent from the operator's `POLICY_FILE` | Gets what that rule allows. Rules by network (`cidr`) cannot be copied this way |
+| A scraper asking for pages with `OPEN_GRAPH=on` | Gets the check page with each page's title, description and preview image, at most 30 origin reads a minute per network, cached; never the page body |
 | Signed agent (Web Bot Auth: `Signature-Agent`, e.g. ChatGPT agent) | Refused. The signature is not verified because a forged header only shuts out its sender |
 | AI app browser that names itself (e.g. `Claude/2.x` in the user agent) | Refused |
 | Plain Playwright / Puppeteer / Selenium | Webdriver flag, headless traces, straight-line pointer steps, DevTools client; Playwright and Puppeteer also by their launch switch (`no_navigation_limit`) |

@@ -5,6 +5,8 @@ import { configFromEnv } from './config.mjs';
 import { Store } from './store.mjs';
 import { createGateway } from './gateway.mjs';
 import { loadCloudRanges } from './sandbox.mjs';
+import { loadPolicy } from './policy.mjs';
+import { createMetrics, metricsServer } from './metrics.mjs';
 
 export async function loadAssets() {
   const assets = {};
@@ -20,10 +22,15 @@ export async function start(config = configFromEnv()) {
   const store = new Store(join(config.dataDir, 'gate.sqlite'));
   const cloud = config.sandboxCheck === 'off' ? null : await loadCloudRanges(config.cloudRangesFile);
   if (config.sandboxCheck !== 'off' && !cloud) console.warn(`No cloud ranges at ${config.cloudRangesFile}; run npm run cloud-ranges to score datacenter addresses.`);
-  const server = createGateway({ config, store, assets, cloud });
-  server.once('close', () => store.close());
+  if (config.policyFile) config.policy = await loadPolicy(config.policyFile);
+  const metrics = config.metricsPort ? createMetrics() : null;
+  const audit = event => { metrics?.record(event); console.log(JSON.stringify(event)); };
+  const server = createGateway({ config, store, assets, cloud, audit });
+  const monitor = metrics && metricsServer(metrics);
+  server.once('close', () => { store.close(); monitor?.close(); });
   await new Promise((resolve, reject) => { server.once('error', reject); server.listen(config.port, config.host, resolve); });
-  console.log(`Human Gate (${config.mode} mode) listening at ${config.origin}`);
+  if (monitor) await new Promise((resolve, reject) => { monitor.once('error', reject); monitor.listen(config.metricsPort, '127.0.0.1', resolve); });
+  console.log(`Human Gate (${config.mode} mode) listening at ${config.origin}${config.policy.length ? `, ${config.policy.length} policy rules` : ''}${monitor ? `, metrics at http://127.0.0.1:${config.metricsPort}/metrics` : ''}`);
   return server;
 }
 
