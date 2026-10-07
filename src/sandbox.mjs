@@ -53,13 +53,17 @@ export async function loadCloudRanges(file) {
 // Software renderers stand in for a missing GPU. Hypervisor adapters are what virtual machines show.
 const SOFTWARE_GPU = /SwiftShader|llvmpipe|softpipe|lavapipe|Basic Render|OSMesa|Mesa OffScreen/i;
 const VIRTUAL_GPU = /VMware|VirtualBox|Parallels|QEMU|virgl|virtio|Hyper-V|Red Hat/i;
+// The Android SDK's emulator names itself ("Android Emulator OpenGL ES Translator (<host GPU>)"), and no phone or tablet
+// draws WebGL in software. No person's phone shows either, so this one refuses on its own; a developer testing a site in
+// an emulator is refused too, and can use SANDBOX_CHECK=log.
+const EMULATOR_GPU = /Android Emulator|gfxstream|goldfish|ranchu/i;
 // What the check page's test scene looks like through SwiftShader, Chrome's software renderer (field-measured).
 // A browser that names a real GPU but draws exactly this has had its GPU name faked.
 export const SOFTWARE_RENDER_HASHES = new Set(['6cf4933af807630f']);
 // Fonts that ship with the operating system and cannot be uninstalled.
 const SYSTEM_FONTS = { windows: ['Segoe UI', 'Calibri', 'Consolas'], mac: ['Helvetica Neue', 'Menlo', 'Avenir'] };
 export const PROBE_FONTS = [...SYSTEM_FONTS.windows, ...SYSTEM_FONTS.mac];
-const WEIGHTS = { datacenter: 2, unbranded_browser: 3, software_gpu: 2, gpu_spoofed: 3, os_mismatch: 2, virtual_gpu: 1, no_webgl: 1, no_voices: 1, no_media_devices: 1, bare_screen: 1, utc_clock: 1 };
+const WEIGHTS = { datacenter: 2, unbranded_browser: 3, emulator_gpu: 4, software_gpu: 2, gpu_spoofed: 3, os_mismatch: 2, virtual_gpu: 1, no_webgl: 1, no_voices: 1, no_media_devices: 1, bare_screen: 1, utc_clock: 1 };
 export const SANDBOX_BLOCK_SCORE = 4;
 export const SANDBOX_STRICT_SCORE = 2;
 
@@ -88,7 +92,8 @@ export function sandboxReport(env, userAgent = '', { datacenter = false, brands 
   const gpu = text('gpu');
   if (value.webgl === false) found.push('no_webgl');
   else if (gpu) {
-    if (SOFTWARE_GPU.test(gpu)) found.push('software_gpu');
+    if (/Android/.test(userAgent) && (EMULATOR_GPU.test(gpu) || SOFTWARE_GPU.test(gpu))) found.push('emulator_gpu');
+    else if (SOFTWARE_GPU.test(gpu)) found.push('software_gpu');
     else if (VIRTUAL_GPU.test(gpu)) found.push('virtual_gpu');
     // A patched WebGL getter, or a real GPU name over software-rendered pixels, means the name was faked.
     if (value.glNative === false || (!SOFTWARE_GPU.test(gpu) && SOFTWARE_RENDER_HASHES.has(text('render', 64)))) found.push('gpu_spoofed');

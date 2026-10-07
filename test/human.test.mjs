@@ -82,7 +82,7 @@ test('holding the button with a real gesture earns a six-hour pass bound to this
   assert.equal((await get(f, '/next', visitor('198.51.100.20', { cookie }))).status, 200);
   assert.equal((await get(f, '/next', visitor('203.0.113.10', { cookie, 'user-agent': 'scraper/1.0' }))).status, 403);
   const issued = f.audit.find(event => event.reason === 'human_pass_issued');
-  assert.deepEqual(issued.automationSignals, ['pointer:mouse', 'moves:9', 'sandbox:0']);
+  assert.deepEqual(issued.automationSignals, ['platform:other', 'pointer:mouse', 'moves:9', 'sandbox:0']);
   f.advance(21601 * 1000);
   assert.equal((await get(f, '/later', visitor('203.0.113.10', { cookie }))).status, 403); // Passes expire.
 });
@@ -95,23 +95,25 @@ test('automation is caught even when it performs the hold, and a claimed hold mu
     [{ signals: { frame: [0, 0], plugins: 0 }, headers: { 'user-agent': 'Mozilla/5.0 (Windows NT 10.0) Chrome/141.0 Safari/537.36' } }, 403, 'automation_detected'],
     [{ signals: { path: SCRIPTED } }, 403, 'automation_detected'],
     [{ signals: { path: SCRIPTED.slice(0, 9).concat(HAND).concat(NOISY) } }, 403, 'automation_detected'],
-    [{ signals: { path: [[300, 120, 1]] } }, 403, 'human_check_failed'], // Jumped onto the button, like agent click tools.
+    [{ signals: { path: [[300, 120, 1]] } }, 403, 'human_check_failed', 'jumped'], // Jumped onto the button, like agent click tools.
     [{ signals: { pressGap: 260 } }, 403, 'human_check_failed'], // Moved somewhere, then pressed elsewhere: a teleport.
     [{ signals: { path: HAND.concat([[191.2, -8.4, 83]]) } }, 403, 'human_check_failed'], // Real mouse noise, then one leap onto the button.
     [{ signals: { pressGap: undefined } }, 403, 'human_check_failed'],
     [{ signals: { automationGlobals: true } }, 403, 'automation_detected'],
     // Playwright, Puppeteer or an agent attached to the browser over the DevTools protocol.
     [{ signals: { devtools: 4.47 }, headers: { 'user-agent': 'Mozilla/5.0 (Windows NT 10.0) Chrome/141.0 Safari/537.36' } }, 403, 'automation_detected'],
-    [{ signals: { trusted: false } }, 403, 'human_check_failed'],
-    [{ signals: { holdMs: 300 } }, 403, 'human_check_failed'],
-    [{ wait: 200 }, 403, 'human_check_failed'], // The page claims a hold the server never saw.
+    [{ signals: { trusted: false } }, 403, 'human_check_failed', 'untrusted'],
+    [{ signals: { holdMs: 300 } }, 403, 'human_check_failed', 'short_hold'],
+    [{ wait: 200 }, 403, 'human_check_failed', 'short_hold'], // The page claims a hold the server never saw.
     [{ nonce: 'x' }, 403, 'invalid_solution'],
     [{ verifyHeaders: visitor('203.0.113.10', { 'user-agent': 'other-client' }) }, 403, 'invalid_challenge'],
   ];
-  for (const [index, [options, status, reason]] of cases.entries()) {
+  for (const [index, [options, status, reason, note]] of cases.entries()) {
     const headers = visitor(`203.0.113.${100 + index}`, options.headers);
     const response = await check(f, { headers, ...options, verifyHeaders: options.verifyHeaders && { ...options.verifyHeaders, 'x-forwarded-for': headers['x-forwarded-for'] } });
     assert.equal(response.status, status, reason); assert.equal(await errorOf(response), reason);
+    // Why a check failed is logged, so `npm run stats` can show it.
+    if (note) assert.ok(f.audit.at(-1).automationSignals.includes(note), note);
   }
   const report = humanReport({ webdriver: 'yes', holdMs: 'long', path: [[1, 'x', 2], 'junk'], pointer: '<script>', frame: 'none' });
   assert.deepEqual(report, { automated: false, trusted: false, holdMs: 0, jumped: false, unrepeated: false, notes: ['pointer:unknown', 'moves:0'] });
@@ -420,6 +422,17 @@ test('sandbox signals score servers high and real personal devices at zero', () 
   const DESKTOP = { ...DOCKER, webgl: true, gpu: 'ANGLE (Intel, Mesa Intel(R) UHD Graphics 620 (KBL GT2), OpenGL 4.6)', glNative: true, voices: 12, screen: [1920, 1080, 1920, 1048] };
   assert.equal(sandboxReport(DESKTOP, LINUX, { brands: 'Chromium|Not_A Brand' }).score, 0);
   assert.equal(sandboxReport({ ...DESKTOP, voices: 0 }, LINUX, { brands: 'Chromium|Not_A Brand' }).score, 1);
+  // Chrome in the Android SDK's emulator, field-tested: it scored 0 and passed with a touch held through adb. It names the
+  // emulator in WebGL; no phone does, or draws WebGL in software.
+  const PHONE = 'Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/113.0.0.0 Mobile Safari/537.36';
+  const EMULATOR = { webgl: true, gpu: 'Android Emulator OpenGL ES Translator (NVIDIA GeForce RTX 5060 Laptop GPU/PCIe/SSE2)', glNative: true,
+    render: 'c60b13631bac3fc2', fonts: [], voices: 0, media: 4, touch: 5, screen: [393, 830, 393, 830], tz: 'Asia/Calcutta' };
+  assert.deepEqual(sandboxReport(EMULATOR, PHONE, { brands: 'Chromium|Google Chrome|Not:A-Brand' }).notes, ['emulator_gpu', 'sandbox:4']);
+  assert.equal(sandboxReport({ ...EMULATOR, gpu: 'Google SwiftShader' }, PHONE).score, 4);
+  assert.equal(sandboxReport({ ...EMULATOR, gpu: 'Adreno (TM) 740' }, PHONE).score, 0);
+  assert.equal(sandboxReport({ ...EMULATOR, gpu: 'Mali-G715' }, PHONE).score, 0);
+  // Off Android, SwiftShader is still a software GPU.
+  assert.deepEqual(sandboxReport({ ...LAPTOP, gpu: 'Google SwiftShader' }, WINDOWS).found, ['software_gpu']);
   assert.equal(unbrandedChromium(['Not)A;Brand', 'Chromium']), true);
   assert.equal(unbrandedChromium([]), false);
   // Malformed or missing reports count for nothing; the other checks still apply.

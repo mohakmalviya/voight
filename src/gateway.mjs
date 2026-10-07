@@ -10,6 +10,7 @@ import { declaredAIAgent, crawlerVerifier } from './agents.mjs';
 import { clientAddress, networkPrefix } from './network.mjs';
 import { sandboxReport, SANDBOX_BLOCK_SCORE, SANDBOX_STRICT_SCORE } from './sandbox.mjs';
 import { scrambledProbe, openReport } from './scramble.mjs';
+import { platform } from './stats.mjs';
 import { matchPolicy } from './policy.mjs';
 import { previewReader } from './preview.mjs';
 
@@ -261,6 +262,7 @@ export function createGateway({ config, store, assets, auth = webauthn(config), 
           if (config.humanCheck !== 'off' && url.pathname === `${PREFIX}human/verify`) {
             const pending = store.takeChallenge(cookie(req, ceremonyCookie));
             if (!pending || pending.kind !== 'human' || pending.ua !== digest(ua)) throw new Denied(403, 'invalid_challenge');
+            signals.push(`platform:${platform(ua)}`);
             // Only this check's script can seal a report that opens with its key. Anything else was altered or forged.
             const reported = openReport(body.report, pending.probe?.key);
             if (!reported) { signals.push('report_tampered'); throw new Denied(403, 'automation_detected'); }
@@ -272,7 +274,9 @@ export function createGateway({ config, store, assets, auth = webauthn(config), 
             if (sandbox) signals.push(...sandbox.notes);
             if (report.automated) throw new Denied(403, 'automation_detected');
             // The server clock checks the hold too, so a script cannot just claim one.
-            if (!report.trusted || report.jumped || report.unrepeated || report.holdMs < HUMAN_HOLD_MS || store.now() - pending.issued < HUMAN_HOLD_MS) throw new Denied(403, 'human_check_failed');
+            const failed = [...(report.trusted ? [] : ['untrusted']), ...(report.jumped ? ['jumped'] : []),
+              ...(report.holdMs < HUMAN_HOLD_MS || store.now() - pending.issued < HUMAN_HOLD_MS ? ['short_hold'] : [])];
+            if (failed.length || report.unrepeated) { signals.push(...failed); throw new Denied(403, 'human_check_failed'); }
             if (!solved(pending.challenge, body.nonce, pending.difficulty)) throw new Denied(403, 'invalid_solution');
             const enforce = config.sandboxCheck === 'enforce';
             if (enforce && sandbox.score >= SANDBOX_BLOCK_SCORE) throw new Denied(403, 'sandbox_detected');
