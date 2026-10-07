@@ -79,6 +79,8 @@ export function sandboxReport(env, userAgent = '', { datacenter = false, brands 
   const text = (field, max = 300) => (typeof value[field] === 'string' ? value[field].slice(0, max) : null);
   const count = field => (Number.isSafeInteger(value[field]) && value[field] >= 0 ? value[field] : null);
   const found = [];
+  // Chromium reports its brands; Firefox and Safari report none.
+  const chromium = typeof brands === 'string' && brands.length > 0;
   if (datacenter) found.push('datacenter');
   const os = desktopOS(userAgent, count('touch') ?? 0);
   // Playwright's own Chromium on a Windows or Mac desktop, where people run Chrome, Edge, Brave or Opera.
@@ -93,13 +95,18 @@ export function sandboxReport(env, userAgent = '', { datacenter = false, brands 
   }
   const fonts = Array.isArray(value.fonts) ? value.fonts.filter(font => typeof font === 'string') : null;
   if (fonts && SYSTEM_FONTS[os] && !SYSTEM_FONTS[os].some(font => fonts.includes(font))) found.push('os_mismatch');
-  // Windows and macOS always ship local speech voices; Linux often has none, so it is not judged.
-  if ((os === 'windows' || os === 'mac') && count('voices') === 0) found.push('no_voices');
+  // Windows and macOS always ship local speech voices. On Linux, Chromium takes them from speech-dispatcher, which desktop
+  // distributions install, and Google Chrome adds its own; a container has neither. Some Linux installs still have none,
+  // so it is one point there, and Firefox on Linux is not judged.
+  if ((os === 'windows' || os === 'mac' || (os === 'linux' && chromium)) && count('voices') === 0) found.push('no_voices');
   if (count('media') === 0) found.push('no_media_devices');
   // A desktop always loses some screen to a taskbar, dock or menu bar. Virtual displays have none.
   const screen = Array.isArray(value.screen) && value.screen.length === 4 && value.screen.every(Number.isFinite) ? value.screen : null;
   if (os && screen && screen[0] === screen[2] && screen[1] === screen[3]) found.push('bare_screen');
   if (['UTC', 'Etc/UTC', 'Etc/GMT', 'GMT', 'Etc/Unknown'].includes(text('tz', 64))) found.push('utc_clock');
-  const score = found.reduce((total, flag) => total + WEIGHTS[flag], 0);
+  // Chromium no longer falls back to software WebGL on a machine without a GPU: Debian's Chromium in Docker on a virtual
+  // display reports no WebGL at all. That is the same machine as a software GPU, so in Chromium it scores the same.
+  const weight = flag => (flag === 'no_webgl' && chromium ? WEIGHTS.software_gpu : WEIGHTS[flag]);
+  const score = found.reduce((total, flag) => total + weight(flag), 0);
   return { score, found, notes: [...found, `sandbox:${score}`] };
 }

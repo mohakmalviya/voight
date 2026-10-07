@@ -144,7 +144,7 @@ test('automation is caught even when it performs the hold, and a claimed hold mu
   assert.deepEqual((await f.post('/_gate/human/verify', { signals: HUMAN }, null, visitor())).status, 403); // No issued check.
 });
 
-test('scripted input on Windows is caught: unpredicted moves, emulated touch and a key that never repeats', async t => {
+test('scripted input on Windows and Linux is caught: unpredicted moves, emulated touch and a key that never repeats', async t => {
   const edge = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/141.0.0.0 Safari/537.36 Edg/141.0.0.0';
   const firefox = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:143.0) Gecko/20100101 Firefox/143.0';
   const mac = 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/141.0.0.0 Safari/537.36';
@@ -153,8 +153,15 @@ test('scripted input on Windows is caught: unpredicted moves, emulated touch and
   for (const input of [[32, 27], [52, 45], [121, 111], [12, 3], [9, 0]]) assert.equal(humanReport({ ...HUMAN, input }, edge).automated, false, String(input));
   assert.deepEqual(humanReport({ ...HUMAN, input: [40, 0] }, edge).notes, ['no_predicted_input', 'pointer:mouse', 'moves:9', 'predicted:0/40']);
   assert.equal(humanReport({ ...HUMAN, input: [47, 5] }, edge).automated, true);
-  // Not judged where it was not measured: other engines and other systems.
-  for (const ua of [firefox, mac, 'Mozilla/5.0 (X11; Linux x86_64) Chrome/141.0 Safari/537.36']) assert.equal(humanReport({ ...HUMAN, input: [40, 0] }, ua).automated, false, ua);
+  // Linux under X11, measured in Docker: operating-system moves every 8 and 16 ms got 38/41 and 40/44 predictions;
+  // xdotool started once per move, as an agent in a container drives it, 4/47.
+  const linux = 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/141.0.0.0 Safari/537.36';
+  for (const input of [[41, 38], [44, 40]]) assert.equal(humanReport({ ...HUMAN, input }, linux).automated, false, String(input));
+  assert.ok(humanReport({ ...HUMAN, input: [47, 4] }, linux).notes.includes('no_predicted_input'));
+  // Not judged where it was not measured: other engines, Macs, ChromeOS and Android.
+  const chromeOS = 'Mozilla/5.0 (X11; CrOS x86_64 14541.0.0) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/141.0.0.0 Safari/537.36';
+  const android = 'Mozilla/5.0 (Linux; Android 14; Pixel 8) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/141.0.0.0 Mobile Safari/537.36';
+  for (const ua of [firefox, mac, chromeOS, android]) assert.equal(humanReport({ ...HUMAN, input: [40, 0] }, ua).automated, false, ua);
   for (const input of [[40], [40, -1], [40, 0.5], '40,0', null]) assert.equal(humanReport({ ...HUMAN, input }, edge).automated, false);
   // Screen positions: a real mouse stays on whole physical pixels at any page zoom; scripted moves fall between them.
   const real = (dpr, scale = dpr, n = 20) => ({ dpr, heights: [797, Math.round(706 * scale / dpr)], points: Array.from({ length: n }, (_, i) => [(300 + i * 3) / scale, (400 + (i % 3)) / scale]) });
@@ -401,6 +408,18 @@ test('sandbox signals score servers high and real personal devices at zero', () 
   assert.equal(sandboxReport(LAPTOP, WINDOWS, { brands: 'Chromium|Not_A Brand' }).score, 3);
   for (const brands of ['Chromium|Google Chrome|Not=A?Brand', 'Chromium|Microsoft Edge|Not A(Brand', 'Brave|Chromium|Not/A)Brand', '', 7]) assert.equal(sandboxReport(LAPTOP, WINDOWS, { brands }).score, 0);
   assert.equal(sandboxReport(LAPTOP, LINUX, { brands: 'Chromium|Not_A Brand' }).score, 0);
+  // Chromium in Docker on a virtual display, field-tested: no GPU gives no WebGL at all (not SwiftShader), and there are no
+  // speech voices. With a set time zone and fake media devices it scored 2 and got a pass; it now scores 4.
+  const DOCKER = { webgl: false, fonts: [], voices: 0, media: 2, touch: 0, screen: [1920, 1080, 1920, 1080], tz: 'Asia/Kolkata' };
+  const docker = sandboxReport(DOCKER, LINUX, { brands: 'Chromium|Not_A Brand' });
+  assert.deepEqual(docker.found, ['no_webgl', 'no_voices', 'bare_screen']);
+  assert.equal(docker.score, 4);
+  // In Firefox, no WebGL is often a privacy setting, and Linux voices are not judged.
+  assert.equal(sandboxReport(DOCKER, 'Mozilla/5.0 (X11; Linux x86_64; rv:143.0) Gecko/20100101 Firefox/143.0').score, 2);
+  // A Linux desktop in Chromium scores nothing; one without speech voices, one point.
+  const DESKTOP = { ...DOCKER, webgl: true, gpu: 'ANGLE (Intel, Mesa Intel(R) UHD Graphics 620 (KBL GT2), OpenGL 4.6)', glNative: true, voices: 12, screen: [1920, 1080, 1920, 1048] };
+  assert.equal(sandboxReport(DESKTOP, LINUX, { brands: 'Chromium|Not_A Brand' }).score, 0);
+  assert.equal(sandboxReport({ ...DESKTOP, voices: 0 }, LINUX, { brands: 'Chromium|Not_A Brand' }).score, 1);
   assert.equal(unbrandedChromium(['Not)A;Brand', 'Chromium']), true);
   assert.equal(unbrandedChromium([]), false);
   // Malformed or missing reports count for nothing; the other checks still apply.
@@ -413,8 +432,8 @@ test('sandbox scores are only recorded in log mode, and refuse or shorten passes
   const logged = await fixture(t, { cloud }, { SANDBOX_CHECK: 'log' });
   const allowed = await check(logged, { signals: { env: SERVER }, headers: server });
   assert.equal(allowed.status, 200);
-  assert.deepEqual(logged.audit.find(event => event.reason === 'human_pass_issued').automationSignals.slice(-6),
-    ['datacenter', 'software_gpu', 'no_media_devices', 'bare_screen', 'utc_clock', 'sandbox:7']);
+  assert.deepEqual(logged.audit.find(event => event.reason === 'human_pass_issued').automationSignals.slice(-7),
+    ['datacenter', 'software_gpu', 'no_voices', 'no_media_devices', 'bare_screen', 'utc_clock', 'sandbox:8']);
 
   const f = await fixture(t, { cloud }); // enforce is the default
   const refused = await check(f, { signals: { env: SERVER }, headers: server });
