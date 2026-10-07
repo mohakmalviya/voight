@@ -60,10 +60,12 @@ export function backForwardRequired(report, userAgent = '') {
 // all but the first few after the hand starts. patchright driving installed Edge, moving like a hand but with a round
 // trip and a pause per step, got none in 83 moves, and 5 of 47 with a real mouse also crossing its window. A script that
 // sends its moves faster gets predictions too, so this catches unhurried scripts, not every script (see the threat
-// model). Measured on Windows only.
+// model). On Linux, Chromium under X11 predicted 38 of 41 and 40 of 44 operating-system moves sent every 8 and 16 ms, and
+// 4 of 47 from xdotool started once per move (an agent in a container), 0 of 24 sent every 33 ms. Not measured on a Mac.
 export const PREDICTED_MIN_MOVES = 10;
 export const PREDICTED_MIN_SHARE = 0.2;
 const windowsDesktop = userAgent => /Windows NT/.test(userAgent) && !/Mobile|Android/.test(userAgent);
+const linuxDesktop = userAgent => /X11; Linux/.test(userAgent) && !/Mobile|Android|CrOS/.test(userAgent);
 // Windows keeps the mouse cursor on whole physical pixels, so every screenX and screenY a real mouse produces, times
 // the display scale, is a whole number: 326 of 326 moves in Edge and Chrome, at 100%, 125% and 150% scaling and at page
 // zooms from 90% to 200%. Page zoom is part of devicePixelRatio but not of screenX, so the scale is devicePixelRatio
@@ -150,7 +152,7 @@ export function humanReport(report, userAgent = '', { returned = null } = {}) {
     || (chromium && (value.touched === false || (value.worker && value.worker.touched === false)))) found.push('console_tampered');
   // [moves, moves with predictions], counted by the probe for the mouse.
   const input = Array.isArray(value.input) && value.input.length === 2 && value.input.every(n => Number.isSafeInteger(n) && n >= 0) ? value.input : null;
-  if (input && chromium && pointer === 'mouse' && windowsDesktop(userAgent) && input[0] >= PREDICTED_MIN_MOVES && input[1] < input[0] * PREDICTED_MIN_SHARE) found.push('no_predicted_input');
+  if (input && chromium && pointer === 'mouse' && (windowsDesktop(userAgent) || linuxDesktop(userAgent)) && input[0] >= PREDICTED_MIN_MOVES && input[1] < input[0] * PREDICTED_MIN_SHARE) found.push('no_predicted_input');
   // [screenX, screenY] of the last 64 mouse moves, devicePixelRatio and [outerHeight, innerHeight], from the probe.
   const points = (Array.isArray(value.points) ? value.points.slice(-64) : []).filter(point => Array.isArray(point) && point.length === 2 && point.every(Number.isFinite));
   const dpr = Number.isFinite(value.dpr) && value.dpr >= 0.25 && value.dpr <= 25 ? value.dpr : null;
