@@ -22,6 +22,8 @@ const CLEARABLE_REASONS = new Set(['reader_rate', 'resource_budget', 'byte_budge
 const PUBLIC_RESPONSE_HEADERS = ['content-language', 'content-security-policy', 'x-frame-options', 'x-robots-tag'];
 // How long a person must hold the button. Agent click tools press and release at once.
 export const HUMAN_HOLD_MS = 1500;
+// A check page left open swaps its one-time ticket (120 s) for a fresh one, for at most this long. Then it starts over.
+export const HUMAN_CHECK_MS = 600000;
 // Outcomes after which a network has to pass the human check for a while, whatever its requests look like.
 const SUSPECT_OUTCOMES = new Set(['automation_detected', 'sandbox_detected', 'human_check_failed', 'temporarily_blocked', 'honeypot']);
 const SUSPECT_MS = 3600000;
@@ -257,6 +259,15 @@ export function createGateway({ config, store, assets, auth = webauthn(config), 
             if (hopID && cookie(req, hopCookie) === hopID) setCookie(res, hopCookie, '', 0);
             setCookie(res, ceremonyCookie, store.challenge({ kind: 'human', challenge, difficulty, ua: digest(ua), issued: store.now(), probe, returned }), 120);
             outcome = 'human_check_issued'; return send(res, 200, { challenge, difficulty, holdMs: HUMAN_HOLD_MS });
+          }
+          if (config.humanCheck !== 'off' && url.pathname === `${PREFIX}human/renew`) {
+            // A fresh ticket for a check page that is still open. The measuring script and its key stay, so the page keeps
+            // everything it has seen so far; the old ticket stops working.
+            const pending = store.takeChallenge(cookie(req, ceremonyCookie));
+            if (!pending || pending.kind !== 'human' || pending.ua !== digest(ua) || store.now() - pending.issued > HUMAN_CHECK_MS) throw new Denied(403, 'invalid_challenge');
+            const challenge = token();
+            setCookie(res, ceremonyCookie, store.challenge({ ...pending, challenge }), 120);
+            outcome = 'human_check_renewed'; return send(res, 200, { challenge, difficulty: pending.difficulty, holdMs: HUMAN_HOLD_MS });
           }
           if (config.humanCheck !== 'off' && url.pathname === `${PREFIX}human/verify`) {
             const pending = store.takeChallenge(cookie(req, ceremonyCookie));
