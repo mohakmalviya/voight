@@ -1,0 +1,52 @@
+{
+  "name": "voight",
+  "version": "0.10.1",
+  "private": true,
+  "type": "module",
+  "description": "Self-hosted gateway that makes bulk automated extraction slow and expensive without making visitors log in",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/mohakmalviya/voight.git"
+  },
+  "bugs": {
+    "url": "https://github.com/mohakmalviya/voight/issues"
+  },
+  "homepage": "https://github.com/mohakmalviya/voight#readme",
+  "keywords": [
+    "anti-scraping",
+    "bot-mitigation",
+    "rate-limiting",
+    "reverse-proxy",
+    "proof-of-work",
+    "passkeys",
+    "webauthn",
+    "ai-agents"
+  ],
+  "engines": {
+    "node": ">=24.14.0"
+  },
+  "scripts": {
+    "build": "node scripts/build.mjs",
+    "start": "node --env-file-if-exists=.env src/main.mjs",
+    "demo": "node --env-file-if-exists=.env scripts/demo.mjs",
+    "admin": "node --env-file-if-exists=.env src/admin.mjs",
+    "test": "node --test test/*.test.mjs",
+    "benchmark": "node scripts/benchmark.mjs",
+    "load-test": "node scripts/load-test.mjs",
+    "browser:install": "node scripts/install-browser.mjs",
+    "benchmark:browser": "npm run build && node scripts/browser-benchmark.mjs",
+    "showcase": "node scripts/showcase.mjs",
+    "cloud-ranges": "node scripts/cloud-ranges.mjs",
+    "stats": "node scripts/stats.mjs",
+    "check": "node scripts/check.mjs"
+  },
+  "dependencies": {
+    "@simplewebauthn/browser": "14.0.0",
+    "@simplewebauthn/server": "14.0.2"
+  },
+  "devDependencies": {
+    "esbuild": "0.28.2",
+    "playwright": "1.63.0"
+  }
+}
