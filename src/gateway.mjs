@@ -27,6 +27,7 @@ const SUSPECT_OUTCOMES = new Set(['automation_detected', 'sandbox_detected', 'hu
 const SUSPECT_MS = 3600000;
 // A check page that loads again this soon after stepping to the hop page did not come back from the back/forward cache.
 const HOP_RELOAD_MS = 15000;
+const HOP_PROOF_MAX_MS = 600000; // 10 minutes max hop reuse across renewals
 const HOP_ID = /^[A-Za-z0-9_-]{43}$/;
 
 class Denied extends Error {
@@ -248,14 +249,16 @@ export function createGateway({ config, store, assets, auth = webauthn(config), 
           if (config.humanCheck !== 'off' && url.pathname === `${PREFIX}human/options`) {
             // A small proof of work rides along, so forging passes without a browser still costs something.
             const challenge = token(), difficulty = config.challengeDifficulty;
-            store.takeChallenge(cookie(req, ceremonyCookie));
+            const prev = store.takeChallenge(cookie(req, ceremonyCookie));
             const probe = scrambledProbe();
             // Whether the page came back from the hop page without loading again. Each hop counts once.
             const hopID = typeof body.hop === 'string' && HOP_ID.test(body.hop) ? body.hop : '';
             const hop = hopID && store.takeChallenge(`hop:${hopID}`);
-            const returned = Boolean(hop && hop.kind === 'hop' && hop.ua === digest(ua));
+            const hopAt = (hop && hop.kind === 'hop' && hop.ua === digest(ua)) ? store.now()
+              : (prev && prev.returned && prev.hopAt && prev.ua === digest(ua) && store.now() - prev.hopAt < HOP_PROOF_MAX_MS ? prev.hopAt : null);
+            const returned = Boolean(hopAt);
             if (hopID && cookie(req, hopCookie) === hopID) setCookie(res, hopCookie, '', 0);
-            setCookie(res, ceremonyCookie, store.challenge({ kind: 'human', challenge, difficulty, ua: digest(ua), issued: store.now(), probe, returned }), 120);
+            setCookie(res, ceremonyCookie, store.challenge({ kind: 'human', challenge, difficulty, ua: digest(ua), issued: store.now(), probe, returned, hopAt }), 120);
             outcome = 'human_check_issued'; return send(res, 200, { challenge, difficulty, holdMs: HUMAN_HOLD_MS });
           }
           if (config.humanCheck !== 'off' && url.pathname === `${PREFIX}human/verify`) {

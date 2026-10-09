@@ -702,3 +702,136 @@ test('which browsers must come back from the hop page', () => {
   assert.equal(backForwardRequired({ engine: 'gecko', env: { touch: 0 } }, android), true);
   assert.equal(backForwardRequired({}, 'Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X) FxiOS/143.0 Mobile/15E148 Safari/605.1.15'), false);
 });
+
+
+test('a check page that sits open past the ticket lifetime can refresh its challenge and pass', async t => {
+  const f = await fixture(t);
+  const person = visitor('198.51.100.95', { 'user-agent': WINDOWS });
+
+  // Initial challenge issued
+  const first = await f.post('/_gate/human/options', {}, null, person);
+  assert.equal(first.status, 200);
+  const firstCookie = f.cookieOf(first);
+
+  // Page sits open: advance 95 seconds (shortly before 120s expiry)
+  f.advance(95000);
+
+  // Page refreshes options to keep ticket fresh
+  const second = await f.post('/_gate/human/options', {}, firstCookie, person);
+  assert.equal(second.status, 200);
+  const { challenge, difficulty } = await second.json();
+  const secondCookie = f.cookieOf(second);
+
+  // Advance another 35 seconds (130 seconds total since initial page load)
+  f.advance(35000);
+
+  // Holding and verifying with the refreshed challenge passes
+  f.advance(1600);
+  const passed = await f.post(
+    '/_gate/human/verify',
+    { nonce: solve(challenge, difficulty), report: sealReport(HUMAN, probeKey(f, secondCookie)) },
+    secondCookie,
+    person
+  );
+  assert.equal(passed.status, 200);
+
+  // An unrefreshed check sitting open 125 seconds fails with invalid_challenge
+  const stale = await f.post('/_gate/human/options', {}, null, visitor('198.51.100.96'));
+  assert.equal(stale.status, 200);
+  f.advance(125000);
+  const expired = await f.post('/_gate/human/verify', { nonce: '1', report: 'irrelevant' }, f.cookieOf(stale), visitor('198.51.100.96'));
+  assert.equal(expired.status, 403);
+  assert.equal(await errorOf(expired), 'invalid_challenge');
+});
+
+test('refreshing human options preserves returned hop state for Firefox', async t => {
+  const f = await fixture(t);
+  const person = visitor('198.51.100.97', { 'user-agent': FIREFOX });
+  const id = hopID();
+  assert.equal((await hopTo(f, id, '/', person)).status, 200);
+
+  // Initial options with hop
+  const first = await f.post('/_gate/human/options', { hop: id }, null, person);
+  assert.equal(first.status, 200);
+  const firstCookie = f.cookieOf(first);
+
+  // 95 seconds later, refreshed options without repeating hop
+  f.advance(95000);
+  const second = await f.post('/_gate/human/options', {}, firstCookie, person);
+  assert.equal(second.status, 200);
+  const { challenge, difficulty } = await second.json();
+  const secondCookie = f.cookieOf(second);
+
+  f.advance(1600);
+  const passed = await f.post(
+    '/_gate/human/verify',
+    { nonce: solve(challenge, difficulty), report: sealReport(HUMAN, probeKey(f, secondCookie)) },
+    secondCookie,
+    person
+  );
+  assert.equal(passed.status, 200);
+});
+
+test('hop proof expires after max validity limit and cannot be reused indefinitely', async t => {
+  const f = await fixture(t);
+  const person = visitor('198.51.100.99', { 'user-agent': FIREFOX });
+  const id = hopID();
+  assert.equal((await hopTo(f, id, '/', person)).status, 200);
+
+  // Initial options with hop
+  const first = await f.post('/_gate/human/options', { hop: id }, null, person);
+  assert.equal(first.status, 200);
+  let currentCookie = f.cookieOf(first);
+
+  // Advance 11 minutes (660 seconds, exceeds 600s HOP_PROOF_MAX_MS)
+  f.advance(660000);
+  const expiredHop = await f.post('/_gate/human/options', {}, currentCookie, person);
+  assert.equal(expiredHop.status, 200);
+  const { challenge, difficulty } = await expiredHop.json();
+  const expiredCookie = f.cookieOf(expiredHop);
+
+  f.advance(1600);
+  const refused = await f.post(
+    '/_gate/human/verify',
+    { nonce: solve(challenge, difficulty), report: sealReport(HUMAN, probeKey(f, expiredCookie)) },
+    expiredCookie,
+    person
+  );
+  assert.equal(refused.status, 403);
+  assert.equal(await errorOf(refused), 'automation_detected');
+});
+
+test('server refuses verify if ticket on server clock is under 1500 ms minimum', async t => {
+  const f = await fixture(t);
+  const person = visitor('198.51.100.100', { 'user-agent': WINDOWS });
+
+  const issued = await f.post('/_gate/human/options', {}, null, person);
+  assert.equal(issued.status, 200);
+  const { challenge, difficulty } = await issued.json();
+  const cookie = f.cookieOf(issued);
+
+  // Only advance 1200 ms (under the 1500 ms minimum)
+  f.advance(1200);
+  const premature = await f.post(
+    '/_gate/human/verify',
+    { nonce: solve(challenge, difficulty), report: sealReport(HUMAN, probeKey(f, cookie)) },
+    cookie,
+    person
+  );
+  assert.equal(premature.status, 403);
+  assert.equal(await errorOf(premature), 'human_check_failed');
+
+  // Issue fresh options and advance full 1500 ms -> passes
+  const fresh = await f.post('/_gate/human/options', {}, null, person);
+  assert.equal(fresh.status, 200);
+  const { challenge: freshChallenge, difficulty: freshDiff } = await fresh.json();
+  const freshCookie = f.cookieOf(fresh);
+  f.advance(1500);
+  const valid = await f.post(
+    '/_gate/human/verify',
+    { nonce: solve(freshChallenge, freshDiff), report: sealReport(HUMAN, probeKey(f, freshCookie)) },
+    freshCookie,
+    person
+  );
+  assert.equal(valid.status, 200);
+});
