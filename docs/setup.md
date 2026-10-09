@@ -68,7 +68,7 @@ These are on the [roadmap](roadmap.md).
 
 5. **Check it works.** Load your site normally. Then, from another machine, send a burst of requests with a script and confirm you get `429` and then a timed block. Lift it with `npm run admin -- unban <that-ip>`.
 
-Read the full [deployment requirements](deployment.md) before going live, and start with the default budgets: they are deliberately generous. Watch the logs for `resource_budget`, `clearance_issued` and `temporarily_blocked` before tightening anything. `SANDBOX_CHECK=enforce` is the default: scores of 4 or more are refused, 2–3 get hour-long passes. Watch `sandbox_detected` lines and the `sandbox:<score>` notes on `human_pass_issued`; if real visitors are being refused, switch to `log` while you look.
+Read the full [deployment requirements](deployment.md) before going live, and start with the default budgets: they are deliberately generous. Watch the logs for `resource_budget`, `clearance_issued` and `temporarily_blocked` before tightening anything. `SANDBOX_CHECK=enforce` is the default: scores of 4 or more are refused, 2–3 get hour-long passes. Watch `sandbox_detected` lines and the `sandbox:<score>` notes on `human_pass_issued`; if real visitors are being refused, switch to `log` while you look. `npm run stats` reads the log from a file or standard input and shows, per platform and input (mouse, touch, keyboard), how many checks passed, failed or were refused, the signals behind each failure, and the sandbox scores of passes. It counts only; the log holds no addresses or user agents.
 
 ## Settings
 

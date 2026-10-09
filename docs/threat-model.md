@@ -191,6 +191,7 @@ The page also reports what kind of machine it runs on, and the server adds wheth
 | `gpu_spoofed` | 3 | Native WebGL getter; pixels match the named GPU | Patched getter, or a real GPU's name over SwiftShader's exact pixels |
 | `os_mismatch` | 2 | Windows has Segoe UI / Calibri / Consolas; a Mac has Helvetica Neue / Menlo / Avenir | Windows or Mac user agent without any of them |
 | `virtual_gpu` | 1 | Rare | VMware, VirtualBox, Parallels, QEMU, virtio |
+| `emulator_gpu` | 4 | Phones name their GPU (Adreno, Mali, PowerVR, Apple) | The Android SDK's emulator names itself (`Android Emulator OpenGL ES Translator`); software WebGL on Android |
 | `no_voices` | 1 | Windows and macOS ship local speech voices; Chromium on a Linux desktop gets them from speech-dispatcher (Firefox on Linux is not judged) | None (Playwright's bundled Chromium and Chromium in a container also have none) |
 | `no_webgl` | 1; 2 in Chromium | WebGL on | Chromium no longer falls back to a software GPU, so a machine without a GPU has no WebGL at all and scores like `software_gpu` |
 | `no_media_devices` | 1 | Speakers, microphones | Often none |
@@ -212,6 +213,17 @@ Debian's Chromium 154 in a Docker container on a virtual X display (Xvfb), start
 | Pointer jumped onto the button | Refused: `human_check_failed` | Refused: `human_check_failed`, sandbox 6 |
 
 These are bar-raisers too. A container that also installs speech-dispatcher and runs a desktop panel is expected to score 2 and get an hour-long pass, and one with a real GPU passed through scores 0 (neither field-tested). Possible false positives: a Linux desktop without speech-dispatcher, with WebGL turned off and no panel scores 4, and the mouse rule has not been measured with a person's mouse on Linux. Operators with Linux visitors can set `SANDBOX_CHECK=log` and read the scores first.
+
+### Android emulators
+
+Phones and tablets skip the desktop signals (voices, screen, fonts), and touch is not judged by the pointer rules, so Chrome in the Android SDK's emulator (Android 14 image, Chrome 113, host GPU) on a home connection scored 0 and passed with a touch held through `adb shell input motionevent`. It names itself in WebGL (`Android Emulator OpenGL ES Translator (<host GPU>)`), which no phone does, so `emulator_gpu` now refuses on its own. Field-tested against the gateway on localhost:
+
+| Emulator | Before | Now |
+| --- | --- | --- |
+| Host GPU (the default), touch held through adb | **Got through**: sandbox 0 | Refused: `emulator_gpu`, sandbox 4 |
+| The same with WebGL turned off by Chrome's debugging command line | — | **Gets through** with an hour-long pass: `no_webgl`, sandbox 2 |
+
+SwiftShader mode is also refused by the rule (unit-tested; the emulator crashed in that mode on the test machine). Not tested: BlueStacks, Genymotion, other desktop Android players and cloud phones, which may name a real GPU; a real phone in a phone farm looks like any phone. A developer testing a site in the emulator is refused too.
 
 Field measurements on a Windows laptop: installed Edge scored 0. Playwright's Chromium in a real window scored 2 (no voices, bare screen) and still got through with a faked curved path. With a software GPU it scored 4; with the GPU name faked the way stealth plugins do, 5; from a datacenter address (simulated), 4. All three were refused.
 
@@ -255,6 +267,7 @@ A pass is a random token, stored hashed, valid for `HUMAN_PASS_SECONDS` (six hou
 | The same claiming to be Firefox on a Mac or Linux | Not judged by the event time. **Expected to get through** if it also gets past the back/forward cache |
 | Firefox driven with operating-system input, or a script that sends repeated keydowns for a keyboard hold | **Gets through** the Firefox input rules; the machine signals still apply |
 | Camoufox claiming to be Firefox on an Android phone | Not asked to make the trip. The machine signals still apply |
+| Chrome in the Android SDK's emulator on a home connection, touch held through adb | Refused: the emulator names itself in WebGL (`emulator_gpu`, field-tested; got in before that rule). With WebGL turned off it gets an hour-long pass (field-tested). Other Android players and cloud phones not tested |
 | Agent that clicks by jumping the pointer onto the button | Fails: no pointer movement before the press, or the press lands away from the last movement |
 | Script faking a curved, jittery, eased human path in a headed browser on a personal computer | Caught when driven over the DevTools protocol with `Runtime` enabled (stock Playwright, Puppeteer). A fork that avoids it gets through, as above |
 | The same script on a cloud server | Refused with `SANDBOX_CHECK=enforce`: datacenter address, software GPU, missing voices and devices, bare screen (field-tested with a software GPU, a faked GPU name, and a simulated datacenter address) |

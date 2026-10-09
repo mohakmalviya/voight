@@ -48,6 +48,7 @@ The measuring code is generated for each check with random names, numbers and an
 - Measure how often real people fail the human check (trackpads, touch, assistive technology) before tightening any rule.
 - Allow known link-preview fetchers a small budget of page heads, so shared links get previews without opening the site to scrapers using their names.
 - Collect `devtools:<ratio>` and `worker:<ratio>` from Android, Mac and Linux Chrome before relying on the threshold there.
+- Catch Android emulators with WebGL turned off, for example by motion-sensor readings (an emulator's are fixed); measure real phones first.
 - Measure `predicted:<with>/<moves>` and `sandbox:<score>` from people on Linux desktops (X11 and Wayland, mouse and touchpad); the Linux rules rest only on container measurements so far.
 - Collect `sandbox:<score>` distributions from real traffic to confirm the `SANDBOX_CHECK=enforce` default; add render hashes for other software renderers (llvmpipe, Mesa) measured on real servers.
 - Behaviour signals after the check (scrolling, reading time) to catch an agent taking over a passed browser, without injecting scripts into origin pages.

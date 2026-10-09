@@ -106,6 +106,7 @@ Caddy, CDNs, every setting and how to test it: [setup guide](docs/setup.md) · [
 npm run admin -- bans                 # active blocks
 npm run admin -- unban 203.0.113.7    # lift a block
 npm run admin -- invite "Reader"      # private mode: one-time invitation
+npm run stats --silent < gateway.log  # check results by platform and input (the log on standard input)
 ```
 
 ## Privacy
@@ -148,7 +149,7 @@ CI runs everything except `attack:agents` on every pull request.
 | `src/store.mjs` | SQLite storage: passes, budgets, blocks, invitations and passkeys |
 | `src/denial.mjs` | HTML for the check, block and error pages |
 | `src/scramble.mjs` | Gives every check its own scrambled copy of the browser probe |
-| `src/policy.mjs`, `src/preview.mjs`, `src/metrics.mjs` | Operator rules, link previews and Prometheus counters |
+| `src/policy.mjs`, `src/preview.mjs`, `src/metrics.mjs`, `src/stats.mjs` | Operator rules, link previews, Prometheus counters and check results read back from the log |
 | `src/webauthn.mjs`, `src/admin.mjs` | Passkeys for private mode, and the `npm run admin` command |
 | `web/human.mjs` | The press-and-hold check in the visitor's browser |
 | `web/probe.template.js`, `web/probe-worker.template.js`, `web/shared.js` | What the check measures in the page, in a worker and in a shared worker |
