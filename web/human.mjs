@@ -38,6 +38,11 @@ async function work(challenge, difficulty) {
 }
 
 let holdMs = 1500, started = 0, frame = 0, timer = 0, pressGap = -1, pointer = 'unknown', trusted = false, repeats = 0, solution, probe, last;
+// The check's one-time ticket lasts 120 s on the server. An open page swaps it for a fresh one at 90 s.
+const TICKET_MS = 120000, RENEW_MS = 90000;
+// When the ticket was issued, the planned swap, a swap in flight, and whether the ticket ran out (the computer slept,
+// or the page sat open past the gateway's limit) so the next visit starts a new check.
+let ticket = 0, renewal = 0, renewing = null, stale = false, checking = false, restarting = false;
 // The last steps the pointer took. People move in uneven curves; scripted pointers jump or move in identical steps.
 const path = [];
 addEventListener('pointermove', event => {
@@ -54,6 +59,8 @@ function fail(message) {
 }
 function begin(event, kind) {
   if (button.disabled || started) return;
+  // A ticket that would run out before the hold ends: get a new check instead.
+  if (stale || Date.now() - ticket > TICKET_MS - holdMs - 5000) { restart(); return; }
   trusted = event.isTrusted; pointer = kind; repeats = 0; started = performance.now(); setState('holding');
   label.textContent = 'Keep holding…'; status.textContent = '';
   // Animation frames only draw the fill; they pause in covered windows, so a timer completes the hold.
@@ -74,7 +81,11 @@ async function finish() {
   const held = performance.now() - started;
   cancelAnimationFrame(frame); button.style.setProperty('--fill', 1);
   started = 0; button.disabled = true; label.textContent = 'Checking…'; setState('checking');
+  checking = true; clearTimeout(renewal);
   try {
+    // A swap that was already on its way finishes first, so the answer goes with the ticket the gateway now holds.
+    await renewing;
+    if (stale) throw new Error('The check could not be completed. Reload the page to try again.');
     // The probe measures the browser at the end, so a client that attaches after the page loads is still seen.
     const [nonce, report] = await Promise.all([solution, probe.then(measure => measure.seal({ trusted, holdMs: Math.round(held), pointer, path, pressGap, repeats }))]);
     await post('verify', { nonce, report });
@@ -131,15 +142,47 @@ function roundTrip() {
   });
 }
 
-(async () => {
-  if (!crypto.subtle) throw new Error('This browser cannot run the check here. Try a current browser.');
-  const hop = await roundTrip();
-  const options = await post('options', { hop });
+// Takes a ticket: starts its proof of work and plans its swap.
+function accept(options) {
   holdMs = options.holdMs ?? holdMs;
   solution = work(options.challenge, options.difficulty);
   solution.catch(() => {});
+  ticket = Date.now(); stale = false;
+  clearTimeout(renewal); renewal = setTimeout(renew, RENEW_MS);
+}
+// Swaps the ticket in place. The measuring script stays loaded, so nothing it has seen is lost. Never during a press.
+function renew() {
+  if (checking || renewing) return;
+  if (started) { renewal = setTimeout(renew, 5000); return; }
+  renewing = post('renew', {}).then(accept, () => { stale = true; }).finally(() => { renewing = null; });
+}
+async function start() {
+  if (!crypto.subtle) throw new Error('This browser cannot run the check here. Try a current browser.');
+  const hop = await roundTrip();
+  const options = await post('options', { hop });
+  accept(options);
   // This check's own measuring script: different names, numbers and report key every time.
   probe = import(`/_gate/human/probe.js?check=${encodeURIComponent(options.challenge)}`).then(module => module.default());
   await probe;
-  button.disabled = false; setState('ready'); status.textContent = 'Ready.';
-})().catch(error => fail(error.message));
+  button.disabled = false; setState('ready'); label.textContent = 'Press and hold'; status.textContent = 'Ready.';
+}
+// A new check from the beginning, for a page that comes back after its ticket ran out. Moves made before it do not
+// count, so the new script sees the pointer arrive.
+async function restart() {
+  if (restarting || checking || started) return;
+  restarting = true; clearTimeout(renewal);
+  button.disabled = true; setState('loading'); status.textContent = 'Getting a fresh check…';
+  path.length = 0; last = undefined;
+  try { await start(); } catch (error) { fail(error.message); } finally { restarting = false; }
+}
+// Someone is back at the page: renew a ticket that is due, or start over if it ran out while they were away.
+function wake() {
+  if (!ticket || document.hidden || started || checking || restarting || renewing) return;
+  const age = Date.now() - ticket;
+  if (stale || age > TICKET_MS - 10000) restart();
+  else if (age >= RENEW_MS) renew();
+}
+for (const name of ['pointermove', 'pointerdown', 'keydown', 'focus']) addEventListener(name, wake, { passive: true });
+document.addEventListener('visibilitychange', wake);
+
+start().catch(error => fail(error.message));

@@ -702,3 +702,50 @@ test('which browsers must come back from the hop page', () => {
   assert.equal(backForwardRequired({ engine: 'gecko', env: { touch: 0 } }, android), true);
   assert.equal(backForwardRequired({}, 'Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X) FxiOS/143.0 Mobile/15E148 Safari/605.1.15'), false);
 });
+
+test('a check page left open swaps its ticket before it runs out, keeps its script, and starts over after ten minutes', async t => {
+  const f = await fixture(t);
+  const firefox = visitor('203.0.113.60', { 'user-agent': FIREFOX });
+  const renew = cookie => f.post('/_gate/human/renew', {}, cookie, firefox);
+  // Left alone, a ticket is gone after two minutes.
+  const idle = await f.post('/_gate/human/options', {}, null, firefox);
+  const idleKey = probeKey(f, f.cookieOf(idle));
+  f.advance(121000);
+  assert.equal(await errorOf(await f.post('/_gate/human/verify', { nonce: '0', report: sealReport(HUMAN, idleKey) }, f.cookieOf(idle), firefox)), 'invalid_challenge');
+  assert.equal(await errorOf(await renew(f.cookieOf(idle))), 'invalid_challenge'); // Too late to swap, too.
+
+  const id = hopID();
+  assert.equal((await hopTo(f, id, '/', firefox)).status, 200);
+  const issued = await f.post('/_gate/human/options', { hop: id }, null, firefox);
+  const first = f.cookieOf(issued), key = probeKey(f, first);
+  let cookie = first, options = await issued.json();
+  for (let i = 0; i < 3; i++) {
+    f.advance(90000);
+    const swapped = await renew(cookie);
+    assert.equal(swapped.status, 200);
+    const next = await swapped.json();
+    assert.notEqual(next.challenge, options.challenge); assert.equal(next.holdMs, 1500);
+    cookie = f.cookieOf(swapped); options = next;
+    // The page keeps the script it loaded: same key, so what it measured so far still counts.
+    assert.equal(probeKey(f, cookie), key);
+  }
+  assert.equal(f.audit.filter(event => event.reason === 'human_check_renewed').length, 3);
+  // The old ticket stopped working when it was swapped.
+  assert.equal(await errorOf(await f.post('/_gate/human/verify', { nonce: '0', report: sealReport(HUMAN, key) }, first, firefox)), 'invalid_challenge');
+  // 4.5 minutes after the page loaded, the hold is answered with the newest ticket and the original script's seal. It
+  // passes because the Firefox page's hop is kept through the swaps.
+  f.advance(20000);
+  const passed = await f.post('/_gate/human/verify', { nonce: solve(options.challenge, options.difficulty), report: sealReport(HUMAN, key) }, cookie, firefox);
+  assert.equal(passed.status, 200, await passed.clone().text());
+
+  // Only another check page of this browser may swap a ticket, and only for ten minutes after the check began.
+  const other = await f.post('/_gate/human/options', {}, null, firefox);
+  assert.equal(await errorOf(await f.post('/_gate/human/renew', {}, f.cookieOf(other), visitor('203.0.113.60', CHROME))), 'invalid_challenge');
+  const open = await f.post('/_gate/human/options', {}, null, firefox);
+  cookie = f.cookieOf(open);
+  for (let i = 0; i < 6; i++) { f.advance(95000); const swapped = await renew(cookie); assert.equal(swapped.status, 200); cookie = f.cookieOf(swapped); }
+  f.advance(90000);
+  assert.equal(await errorOf(await renew(cookie)), 'invalid_challenge');
+  // The page then starts a new check.
+  assert.equal((await f.post('/_gate/human/options', {}, null, firefox)).status, 200);
+});
