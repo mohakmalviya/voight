@@ -16,7 +16,7 @@ test('the platform note names only the operating system family', () => {
   assert.equal(platform(), 'other');
 });
 
-test('stats count check answers per platform and input, and the signals on those that did not pass', () => {
+test('stats count requests that reached the site or were refused, check answers per platform and input, and the signals on those that did not pass', () => {
   const stats = createStats();
   const answer = (reason, ...notes) => stats.add({ at: '2026-10-07T10:00:00.000Z', status: reason === 'human_pass_issued' ? 200 : 403, reason, automationSignals: notes });
   for (let i = 0; i < 3; i++) stats.add({ reason: 'human_check_required', automationSignals: [] });
@@ -31,7 +31,11 @@ test('stats count check answers per platform and input, and the signals on those
   // Not answers to a check, or not log lines at all.
   stats.add({ reason: 'admitted', automationSignals: ['webdriver'] });
   for (const junk of [null, 'junk', 7, { automationSignals: 'platform:windows' }]) stats.add(junk);
+  stats.add({ at: '2026-10-07T11:00:00.000Z', status: 429, reason: 'honeypot', automationSignals: ['honeypot'] });
+  stats.add({ status: 404, reason: 'admitted', automationSignals: [] });
   const summary = stats.summary();
+  assert.equal(summary.requests, 15); assert.equal(summary.through, 2);
+  assert.deepEqual(summary.refused, { human_check_failed: 1, sandbox_detected: 1, automation_detected: 1, invalid_solution: 1, honeypot: 1 });
   assert.equal(summary.shown, 3); assert.equal(summary.issued, 2);
   assert.deepEqual(summary.rows, {
     'android/touch': { passed: 0, short: 0, failed: 1, automation: 0, sandbox: 1, other: 0 },
@@ -42,8 +46,9 @@ test('stats count check answers per platform and input, and the signals on those
   assert.deepEqual(summary.flags, { 'failed: short_hold': 1, 'sandbox: emulator_gpu': 1, 'automation: no_predicted_input': 1, 'automation: no_webgl': 1 });
   assert.deepEqual(summary.scores, { 0: 1, 1: 1, 2: 1 });
   const text = stats.render();
+  assert.match(text, /Requests from 2026-10-07T10:00:00.000Z to 2026-10-07T11:00:00.000Z: 15\n  2 reached the site, 3 got the human check, 5 were refused \(human_check_failed 1, sandbox_detected 1, automation_detected 1, invalid_solution 1, honeypot 1\)/);
   assert.match(text, /Shown 3, started 2, answered 7/);
   assert.match(text, /android\/touch +0 +0 +1 +0 +1 +0/);
   assert.match(text, /Sandbox score of passes: 0: 1, 1: 1, 2: 1/);
-  assert.match(createStats().render(), /no answers in this log/);
+  assert.match(createStats().render(), /Requests \(none in this log\): 0\n  0 reached the site, 0 got the human check, 0 were refused\n[^]*no answers in this log/);
 });

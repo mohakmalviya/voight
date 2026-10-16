@@ -106,7 +106,7 @@ Caddy, CDNs, every setting and how to test it: [setup guide](docs/setup.md) · [
 npm run admin -- bans                 # active blocks
 npm run admin -- unban 203.0.113.7    # lift a block
 npm run admin -- invite "Reader"      # private mode: one-time invitation
-npm run stats --silent < gateway.log  # check results by platform and input (the log on standard input)
+npm run stats --silent < gateway.log  # what reached the site, what was refused, check results by platform
 ```
 
 ## Privacy
