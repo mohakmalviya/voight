@@ -90,6 +90,7 @@ Read the full [deployment requirements](deployment.md) before going live, and st
 | `STRIKES_PER_WINDOW` | `30` | Denied requests a network may send in `STRIKE_WINDOW_SECONDS` before a block |
 | `STRIKE_WINDOW_SECONDS` | `600` | Strike counting window |
 | `BAN_SECONDS` / `MAX_BAN_SECONDS` | `300` / `86400` | First block length, and the cap for repeats (4× each time) |
+| `CHECK_PAGES_PER_WINDOW` | `30` | Human check pages a network may be shown in `STRIKE_WINDOW_SECONDS` without starting one check before a block. A browser starts the check as soon as the page loads, so only tools collecting pages reach this. `0` turns it off |
 | `CHALLENGE_DIFFICULTY` | `16` | Leading zero bits for the first check (about 65k hashes, around a second) |
 | `CLEARANCES_PER_WINDOW` | `5` | Checks one network can pass per `CLEARANCE_SECONDS` |
 | `CLEARANCE_SECONDS` | `3600` | Lifetime of a clearance and its budget |
@@ -97,7 +98,7 @@ Read the full [deployment requirements](deployment.md) before going live, and st
 | `AI_AGENTS` | `block` | `block` refuses self-declared and signed AI agents; `allow` lets them through |
 | `HUMAN_CHECK` | `suspicious` | Public mode: `suspicious` shows the press-and-hold check only to visitors with a reason (see [how it works](how-it-works.md)); `always` shows it to every new visitor; `off` turns it off |
 | `OPEN_PATHS` | `/robots.txt,/favicon.ico,/.well-known/*` | Comma-separated paths anyone can fetch without the check; a trailing `*` opens everything under that path. For example add `/feed.xml,/sitemap.xml` for feed readers |
-| `POLICY_FILE` | *(none)* | JSON rules that `allow` (skip the check and the AI-agent refusal), `deny` or always `check` requests by `path`, `userAgent`, `headers` (name to pattern; a missing header reads as empty) or `cidr`, first match wins. See [the example](policy.example.json) |
+| `POLICY_FILE` | *(none)* | JSON rules that `allow` (skip the check and the AI-agent refusal), `deny`, always `check`, or `ban` (refuse and block the network, as the trap link does) requests by `path`, `userAgent`, `headers` (name to pattern; a missing header reads as empty) or `cidr`, first match wins. See [the example](policy.example.json) |
 | `HONEYPOT` | `block` | The hidden link in gate pages: `block` blocks a network that fetches it (as for ignored limits), `log` only records `honeypot`, `off` leaves the link out |
 | `OPEN_GRAPH` / `OPEN_GRAPH_SECONDS` | `off` / `86400` | `on` gives link-preview clients the page's own preview tags (read from the origin, cached this long) and opens the preview images they name |
 | `CONTACT` | *(none)* | An email address or `https://` link shown on gate pages so refused people can reach you; emails get the reference filled in |

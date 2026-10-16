@@ -48,7 +48,7 @@ Visitor  →  HTTPS proxy (nginx, Caddy…)  →  Voight  →  your site
 | 🪤 **HTML scrapers** | A hidden trap link. Following it gets them blocked |
 | 🙂 **People** | Pass once, browse for 6 hours |
 
-**Also included:** your own allow/deny rules (`POLICY_FILE`), link previews for chat apps (`OPEN_GRAPH`), and a private mode where only invited people with a passkey get in.
+**Also included:** your own allow/deny/ban rules (`POLICY_FILE`), link previews for chat apps (`OPEN_GRAPH`), and a private mode where only invited people with a passkey get in.
 
 Full details of every check: [docs/how-it-works.md](docs/how-it-works.md). The trap link and link previews come from [Anubis](https://github.com/TecharoHQ/anubis).
 

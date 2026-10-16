@@ -65,6 +65,12 @@ const DENIALS = {
     wait: retry => `Access resumes automatically in about ${duration(retry)}` },
   policy_denied: { mark: 'ban', tone: 'danger', title: 'Access refused',
     intro: () => 'This website’s operator does not allow access from this browser or network.' },
+  policy_banned: { mark: 'ban', tone: 'danger', title: 'Access refused',
+    intro: () => 'This website’s operator blocks requests like this one, so requests from your network are blocked for a while.',
+    wait: retry => `Access resumes automatically in about ${duration(retry)}` },
+  checks_ignored: { mark: 'bot', tone: 'danger', title: 'Automated browsing detected',
+    intro: () => 'Your network loaded this website’s human check many times without starting it, which browsers do on their own, so requests from your network are blocked for a while.',
+    wait: retry => `Access resumes automatically in about ${duration(retry)}` },
 };
 const PAUSED = { mark: 'clock', tone: 'warning', title: 'Access paused', intro: () => 'This website’s access limit has been reached. It resets on its own.',
   wait: retry => `Wait at least ${duration(retry)} before trying again` };
