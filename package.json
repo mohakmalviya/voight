@@ -39,6 +39,7 @@
     "showcase": "node scripts/showcase.mjs",
     "cloud-ranges": "node scripts/cloud-ranges.mjs",
     "attack:agents": "npm run build && node scripts/agent-attack.mjs",
+    "stats": "node scripts/stats.mjs",
     "check": "node scripts/check.mjs"
   },
   "dependencies": {
