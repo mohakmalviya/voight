@@ -2,9 +2,10 @@ import { readFile } from 'node:fs/promises';
 import { parseAddress, parseCIDR, inRanges } from './network.mjs';
 
 // The operator's own rules (POLICY_FILE), checked in order before anything else; the first rule whose conditions all
-// match decides. `allow` skips the human check and the AI-agent refusal, `check` always asks for the human check, and
-// `deny` refuses. Budgets and blocks apply whatever a rule says.
-const ACTIONS = new Set(['allow', 'deny', 'check']);
+// match decides. `allow` skips the human check and the AI-agent refusal, `check` always asks for the human check,
+// `deny` refuses, and `ban` refuses and blocks the network for a while (public mode). Budgets and blocks apply whatever
+// a rule says.
+const ACTIONS = new Set(['allow', 'deny', 'check', 'ban']);
 const CONDITIONS = new Set(['path', 'userAgent', 'headers', 'cidr']);
 
 function pattern(value, where) {
@@ -18,7 +19,7 @@ export function parsePolicy(value) {
   return rules.map((rule, i) => {
     const name = rule?.name;
     if (typeof name !== 'string' || !/^[A-Za-z0-9_.-]{1,64}$/.test(name)) throw new Error(`POLICY_FILE rule ${i + 1} needs a name of letters, digits, dots, dashes or underscores`);
-    if (!ACTIONS.has(rule.action)) throw new Error(`POLICY_FILE rule ${name}: action must be allow, deny or check`);
+    if (!ACTIONS.has(rule.action)) throw new Error(`POLICY_FILE rule ${name}: action must be allow, deny, check or ban`);
     const unknown = Object.keys(rule).filter(key => !['name', 'action', ...CONDITIONS].includes(key));
     if (unknown.length) throw new Error(`POLICY_FILE rule ${name}: unknown field ${unknown[0]}`);
     if (![...CONDITIONS].some(key => rule[key] !== undefined)) throw new Error(`POLICY_FILE rule ${name} needs at least one of path, userAgent, headers or cidr`);

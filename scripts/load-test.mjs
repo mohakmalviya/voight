@@ -75,8 +75,9 @@ if (role === 'origin') {
   const gateway = fork(self, ['gateway'], {
     execArgv: process.env.PROFILE_DIR ? ['--cpu-prof', `--cpu-prof-dir=${process.env.PROFILE_DIR}`] : [],
     stdio: ['ignore', 'ignore', 'inherit', 'ipc'],
+    // The bots run measures serving check pages, so the block for check pages never started is off.
     env: { ...process.env, DATA_DIR: dataDir, UPSTREAM: `http://127.0.0.1:${originPort}`, PORT: '8799', PUBLIC_ORIGIN: 'http://localhost:8799',
-      TRUSTED_PROXIES: '127.0.0.1', HUMAN_CHECK: 'always', OPEN_GRAPH: 'on', SANDBOX_CHECK: 'off' },
+      TRUSTED_PROXIES: '127.0.0.1', HUMAN_CHECK: 'always', OPEN_GRAPH: 'on', SANDBOX_CHECK: 'off', CHECK_PAGES_PER_WINDOW: '0' },
   });
   await once(gateway, 'message');
   const stats = () => new Promise(resolve => { gateway.once('message', resolve); gateway.send('stats'); });

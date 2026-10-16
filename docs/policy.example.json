@@ -4,6 +4,7 @@
     { "name": "uptime-monitor", "action": "allow", "cidr": ["203.0.113.7"], "path": "^/health$" },
     { "name": "feeds", "action": "allow", "path": "^/(?:feed|rss)\\.xml$" },
     { "name": "known-scraper", "action": "deny", "userAgent": "ScrapeKit|DataHarvest" },
+    { "name": "secret-file-scan", "action": "ban", "path": "/\\.(?:env|git|aws|ssh)(?:[./_~-]|$)|\\.(?:php|sql|bak|tfstate)$|/wp-login" },
     { "name": "no-referer-to-downloads", "action": "check", "path": "^/downloads/", "headers": { "Referer": "^$" } },
     { "name": "admin-area", "action": "check", "path": "^/admin/" }
   ]

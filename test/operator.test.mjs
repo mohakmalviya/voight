@@ -96,17 +96,60 @@ test('operator rules allow, deny or always check by path, user agent, header or 
   assert.deepEqual(lastSignals(f), ['policy:admin', 'suspect:policy']);
 });
 
+test('a ban rule refuses and blocks the network for a while, as the trap link does', async t => {
+  const policy = parsePolicy({ rules: [{ name: 'secrets', action: 'ban', path: '/\.env' }] });
+  const f = await fixture(t, { policy });
+  const banned = await f.request('/.env', { headers: visitor('203.0.113.60') });
+  assert.equal(banned.status, 429); assert.equal((await banned.json()).error, 'policy_banned');
+  assert.equal(banned.headers.get('retry-after'), '300');
+  assert.deepEqual(lastSignals(f), ['policy:secrets']);
+  // Everything from that network is refused now; other networks are not.
+  assert.equal((await f.request('/article', { headers: visitor('203.0.113.60') }).then(r => r.json())).error, 'temporarily_blocked');
+  assert.equal((await f.request('/article', { headers: visitor('203.0.113.61') }).then(r => r.json())).error, 'human_check_required');
+  assert.match((await get(f, '/app/.env', visitor('198.51.100.7', { accept: 'text/html' }))).text, /blocked for a while/);
+  f.advance(301000);
+  assert.equal((await f.request('/article', { headers: visitor('203.0.113.60') }).then(r => r.json())).error, 'human_check_required');
+  assert.equal(f.hits(), 0);
+  // Private mode has no network blocks, so there a ban rule only refuses.
+  const p = await createFixture({ policy }, site, ASSETS, { MODE: 'private' }); t.after(p.close);
+  const refused = await p.request('/.env');
+  assert.equal(refused.status, 403); assert.equal((await refused.json()).error, 'policy_denied');
+});
+
+test('a network shown the check page again and again without starting it is blocked', async t => {
+  const f = await fixture(t);
+  const error = (ip, path = '/article') => f.request(path, { headers: visitor(ip) }).then(r => r.json()).then(body => body.error);
+  for (let i = 0; i < 30; i++) assert.equal(await error('203.0.113.70', `/page-${i}`), 'human_check_required');
+  const blocked = await f.request('/page-30', { headers: visitor('203.0.113.70') });
+  assert.equal(blocked.status, 429); assert.equal((await blocked.json()).error, 'checks_ignored');
+  assert.equal(blocked.headers.get('retry-after'), '300');
+  assert.equal(await error('203.0.113.70', '/'), 'temporarily_blocked');
+  // Browsers start a check as soon as the page loads, and each start begins the count again.
+  for (let round = 0; round < 3; round++) {
+    for (let i = 0; i < 25; i++) assert.equal(await error('203.0.113.71'), 'human_check_required');
+    assert.equal((await f.post('/_gate/human/options', {}, null, visitor('203.0.113.71'))).status, 200);
+  }
+  // The count covers STRIKE_WINDOW_SECONDS.
+  for (let i = 0; i < 30; i++) await error('203.0.113.72');
+  f.advance(600001);
+  assert.equal(await error('203.0.113.72'), 'human_check_required');
+  // 0 turns it off.
+  const off = await fixture(t, {}, { CHECK_PAGES_PER_WINDOW: '0' });
+  for (let i = 0; i < 40; i++) assert.equal((await off.request('/article', { headers: visitor('203.0.113.73') }).then(r => r.json())).error, 'human_check_required');
+  assert.throws(() => configFromEnv({ CHECK_PAGES_PER_WINDOW: '-1' }), /CHECK_PAGES_PER_WINDOW/);
+});
+
 test('operator rules are validated when they load', async () => {
   assert.throws(() => parsePolicy({}), /list of rules/);
   assert.throws(() => parsePolicy([{ name: 'x y', action: 'allow', path: '/' }]), /needs a name/);
-  assert.throws(() => parsePolicy([{ name: 'a', action: 'ban', path: '/' }]), /allow, deny or check/);
+  assert.throws(() => parsePolicy([{ name: 'a', action: 'block', path: '/' }]), /allow, deny, check or ban/);
   assert.throws(() => parsePolicy([{ name: 'a', action: 'allow' }]), /at least one/);
   assert.throws(() => parsePolicy([{ name: 'a', action: 'allow', path: '(' }]), /not a regular expression/);
   assert.throws(() => parsePolicy([{ name: 'a', action: 'allow', cidr: ['10.0.0.0/33'] }]), /invalid cidr/);
   assert.throws(() => parsePolicy([{ name: 'a', action: 'allow', headers: { 'bad header': 'x' } }]), /invalid header name/);
   assert.throws(() => parsePolicy([{ name: 'a', action: 'allow', path: '/', ip: '1.2.3.4' }]), /unknown field ip/);
   await assert.rejects(loadPolicy('./no-such-policy.json'), /Cannot read POLICY_FILE/);
-  assert.deepEqual((await loadPolicy(new URL('../docs/policy.example.json', import.meta.url))).map(rule => rule.action), ['allow', 'allow', 'allow', 'deny', 'check', 'check']);
+  assert.deepEqual((await loadPolicy(new URL('../docs/policy.example.json', import.meta.url))).map(rule => rule.action), ['allow', 'allow', 'allow', 'deny', 'ban', 'check', 'check']);
   const rules = parsePolicy([{ name: 'first', action: 'check', path: '^/a' }, { name: 'second', action: 'deny', path: '^/a' }]);
   assert.equal(matchPolicy(rules, { path: '/a', userAgent: '', headers: {}, ip: '203.0.113.1' }).name, 'first');
   assert.equal(matchPolicy(rules, { path: '/b', userAgent: '', headers: {}, ip: '203.0.113.1' }), null);

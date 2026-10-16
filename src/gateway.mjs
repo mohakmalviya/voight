@@ -26,7 +26,7 @@ export const HUMAN_HOLD_MS = 1500;
 // A check page left open swaps its one-time ticket (120 s) for a fresh one, for at most this long. Then it starts over.
 export const HUMAN_CHECK_MS = 600000;
 // Outcomes after which a network has to pass the human check for a while, whatever its requests look like.
-const SUSPECT_OUTCOMES = new Set(['automation_detected', 'sandbox_detected', 'human_check_failed', 'temporarily_blocked', 'honeypot']);
+const SUSPECT_OUTCOMES = new Set(['automation_detected', 'sandbox_detected', 'human_check_failed', 'temporarily_blocked', 'honeypot', 'policy_banned', 'checks_ignored']);
 const SUSPECT_MS = 3600000;
 // A check page that loads again this soon after stepping to the hop page did not come back from the back/forward cache.
 const HOP_RELOAD_MS = 15000;
@@ -171,6 +171,8 @@ export function createGateway({ config, store, assets, auth = webauthn(config), 
       const rule = gateAsset ? null : matchPolicy(config.policy ?? [], { path: url.pathname, userAgent: ua, headers: req.headers, ip });
       if (rule) signals.push(`policy:${rule.name}`);
       if (rule?.action === 'deny') throw new Denied(403, 'policy_denied');
+      // Something only a scanner asks for, such as /.env: the network is blocked, as for the trap link.
+      if (rule?.action === 'ban') throw network ? new Denied(429, 'policy_banned', store.ban(network, config.banSeconds, config.maxBanSeconds)) : new Denied(403, 'policy_denied');
       const allowed = rule?.action === 'allow';
       const agent = config.aiAgents === 'block' && !gateAsset && !allowed && !isOpen(url.pathname) && declaredAIAgent(req.headers);
       if (agent) { signals.push(`ai_agent:${agent}`); throw new Denied(403, 'ai_agent'); }
@@ -252,6 +254,7 @@ export function createGateway({ config, store, assets, auth = webauthn(config), 
             // A small proof of work rides along, so forging passes without a browser still costs something.
             const challenge = token(), difficulty = config.challengeDifficulty;
             store.takeChallenge(cookie(req, ceremonyCookie));
+            if (network) store.resetLimit(`unstarted:${network}`);
             const probe = scrambledProbe();
             // Whether the page came back from the hop page without loading again. Each hop counts once.
             const hopID = typeof body.hop === 'string' && HOP_ID.test(body.hop) ? body.hop : '';
@@ -363,7 +366,16 @@ export function createGateway({ config, store, assets, auth = webauthn(config), 
         else if (reason && isDocument(req) && reloadedAfterHop(req, url, ua)) {
           setCookie(res, hopCookie, '', 0); signals.push('back_forward_reload'); throw new Denied(403, 'automation_detected');
         }
-        else if (reason) { signals.push(`suspect:${reason}`); throw new Denied(403, 'human_check_required'); }
+        else if (reason) {
+          signals.push(`suspect:${reason}`);
+          // A browser starts the check as soon as the page loads. Check page after check page from one network with none
+          // started is a tool collecting pages, and the network is blocked.
+          if (network && config.checkPagesPerWindow && !store.limit(`unstarted:${network}`, config.checkPagesPerWindow, config.strikeWindowSeconds * 1000)) {
+            store.resetLimit(`unstarted:${network}`);
+            throw new Denied(429, 'checks_ignored', store.ban(network, config.banSeconds, config.maxBanSeconds));
+          }
+          throw new Denied(403, 'human_check_required');
+        }
         else if (human && isDocument(req) && !store.limit(`humannav:${human.hash}`, config.humanPagesPerMinute)) {
           // Page after page faster than anyone reads: an agent may have taken over. Ask again.
           store.revokePass(human.hash); throw new Denied(403, 'human_recheck');

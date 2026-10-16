@@ -66,6 +66,8 @@ export function configFromEnv(env = process.env) {
     strikesPerWindow: integer(env, 'STRIKES_PER_WINDOW', 30, 1, 10000),
     strikeWindowSeconds: integer(env, 'STRIKE_WINDOW_SECONDS', 600, 60, 86400),
     banSeconds, maxBanSeconds: integer(env, 'MAX_BAN_SECONDS', 86400, banSeconds, 30 * 86400),
+    // Check pages a network may be shown in that window without starting one check before a block (0: no limit).
+    checkPagesPerWindow: integer(env, 'CHECK_PAGES_PER_WINDOW', 30, 0, 100000),
     challengeDifficulty: integer(env, 'CHALLENGE_DIFFICULTY', 16, 1, 28),
     clearancesPerWindow: integer(env, 'CLEARANCES_PER_WINDOW', 5, 0, 100),
     clearanceSeconds: integer(env, 'CLEARANCE_SECONDS', 3600, 60, 86400),
